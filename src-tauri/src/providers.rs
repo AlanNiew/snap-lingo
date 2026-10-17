@@ -11,7 +11,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_ATTEMPTS: u32 = 3;
 /// Translate in slices of roughly this many characters.
@@ -271,14 +271,19 @@ impl Providers {
             body
         };
 
+        // Local servers (Ollama, LM Studio) need no key at all, and an empty
+        // `Bearer ` header makes strict gateways reject the call outright.
+        let authorized = |req: reqwest::RequestBuilder| {
+            if api_key.trim().is_empty() {
+                req
+            } else {
+                req.header("Authorization", format!("Bearer {}", api_key.trim()))
+            }
+        };
+
         let raw = match self
             .send_with_retry(
-                || {
-                    self.client
-                        .post(&url)
-                        .header("Authorization", format!("Bearer {}", api_key.trim()))
-                        .json(&build(json_mode, true))
-                },
+                || authorized(self.client.post(&url)).json(&build(json_mode, true)),
                 "聊天补全",
             )
             .await
@@ -289,12 +294,7 @@ impl Providers {
                 log::warn!("provider rejected optional params, retrying plain: {err:#}");
                 match self
                     .send_with_retry(
-                        || {
-                            self.client
-                                .post(&url)
-                                .header("Authorization", format!("Bearer {}", api_key.trim()))
-                                .json(&build(false, false))
-                        },
+                        || authorized(self.client.post(&url)).json(&build(false, false)),
                         "聊天补全",
                     )
                     .await
@@ -405,9 +405,30 @@ fn classify_transport(err: &reqwest::Error) -> String {
 fn explain_http_error(status: u16, body: &str) -> String {
     let detail = extract_error_message(body).unwrap_or_else(|| truncate(body, 300));
 
+    // Gateways answer an unauthenticated call in their own way; NVIDIA's router
+    // (axum) reports it as a generic 500 about a missing Authorization extension.
+    if body.to_ascii_lowercase().contains("authorization") {
+        return format!(
+            "接口没有收到有效的 Authorization（API Key 为空或无效）。请在设置里填写 API Key；本地服务（Ollama / LM Studio）可以留空。 HTTP {status}: {detail}"
+        );
+    }
+
     let prefix = match status {
-        401 | 403 => "RETRY: 鉴权失败（401/403）——请检查 API Key 是否正确、是否有该模型权限。",
+        401 => "鉴权失败（401）——请检查 API Key 是否正确、是否已过期。",
+        403 => {
+            // OpenRouter and friends use 403 for region locks, which is not a
+            // key problem at all and reads very differently to the user.
+            let lower = body.to_ascii_lowercase();
+            if lower.contains("region") || lower.contains("country") || lower.contains("territor") {
+                "服务端拒绝访问（403）：所选模型在你的地区不可用。请换一个模型，或改用其他服务商。"
+            } else {
+                "鉴权失败（403）——请检查 API Key 是否有该模型的权限。"
+            }
+        }
         429 => "RETRY: 触发限流（429）——稍后自动重试。",
+        503 => {
+            "RETRY: 服务端过载（503）——正在自动重试；如果一直失败，通常是所选模型当前负载过高，可稍后再试，或换用更轻量的模型。"
+        }
         500..=599 => "RETRY: 服务端错误——稍后自动重试。",
         _ => "请求被拒绝：",
     };
@@ -695,6 +716,32 @@ mod tests {
 
         let e = anyhow!(explain_http_error(400, r#"{"error":{"message":"bad model"}}"#));
         assert!(!is_retryable(&e));
+    }
+
+    #[test]
+    fn overloaded_service_is_retryable_and_actionable() {
+        let e = anyhow!(explain_http_error(503, "Service temporarily overloaded"));
+        assert!(is_retryable(&e), "503 should be retried");
+        assert!(format!("{e}").contains("过载"));
+    }
+
+    #[test]
+    fn missing_credentials_are_not_retried() {
+        // A real 401 from an OpenAI-compatible gateway.
+        let e = anyhow!(explain_http_error(
+            401,
+            r#"{"error":{"message":"invalid api key"}}"#
+        ));
+        assert!(!is_retryable(&e));
+        assert!(format!("{e}").contains("API Key"));
+
+        // NVIDIA NIM reports a missing Authorization header as a 500.
+        let e = anyhow!(explain_http_error(
+            500,
+            "Missing request extension: Extension of type `headers::common::authorization::Authorization<Bearer>` was not found."
+        ));
+        assert!(!is_retryable(&e), "a missing key must not be retried");
+        assert!(format!("{e}").contains("API Key"));
     }
 
     #[test]

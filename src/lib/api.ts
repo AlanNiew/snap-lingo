@@ -42,6 +42,7 @@ export const EVENTS = {
   config: "config:changed",
   hotkeyError: "hotkey:error",
   navigate: "ui:navigate",
+  session: "session:changed",
 } as const;
 
 export const api = {
@@ -106,6 +107,11 @@ export function onNavigate(handler: (target: string) => void): Promise<UnlistenF
 
 export function onHotkeyError(handler: (message: string) => void): Promise<UnlistenFn> {
   return listen<string>(EVENTS.hotkeyError, (event) => handler(event.payload));
+}
+
+/** Fires in a warm overlay when a new capture has been frozen for its monitor. */
+export function onSession(handler: (monitorId: number) => void): Promise<UnlistenFn> {
+  return listen<number>(EVENTS.session, (event) => handler(event.payload));
 }
 
 /* ------------------------------------------------------------------ helpers */

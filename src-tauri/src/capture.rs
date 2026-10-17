@@ -111,16 +111,25 @@ pub struct MonitorInfo {
 
 pub fn monitors() -> Result<Vec<MonitorInfo>> {
     let list = Monitor::all().context("无法枚举显示器")?;
-    Ok(list
+    let mut described: Vec<(bool, MonitorInfo)> = list
         .iter()
-        .map(|m| MonitorInfo {
-            id: m.id().unwrap_or(0),
-            name: m.name().unwrap_or_default(),
-            x: m.x().unwrap_or(0),
-            y: m.y().unwrap_or(0),
-            width: m.width().unwrap_or(0),
-            height: m.height().unwrap_or(0),
-            scale_factor: m.scale_factor().unwrap_or(1.0) as f64,
+        .map(|m| {
+            (
+                m.is_primary().unwrap_or(false),
+                MonitorInfo {
+                    id: m.id().unwrap_or(0),
+                    name: m.name().unwrap_or_default(),
+                    x: m.x().unwrap_or(0),
+                    y: m.y().unwrap_or(0),
+                    width: m.width().unwrap_or(0),
+                    height: m.height().unwrap_or(0),
+                    scale_factor: m.scale_factor().unwrap_or(1.0) as f64,
+                },
+            )
         })
-        .collect())
+        .collect();
+    // Primary first, same as `capture`, so callers can treat the first entry as
+    // the monitor the user is actually looking at.
+    described.sort_by_key(|(primary, _)| !*primary);
+    Ok(described.into_iter().map(|(_, info)| info).collect())
 }

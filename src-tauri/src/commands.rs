@@ -172,7 +172,7 @@ pub fn start_capture(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn cancel_capture(app: AppHandle) {
+pub async fn cancel_capture(app: AppHandle) {
     pipeline::cancel_capture(&app);
 }
 
@@ -189,8 +189,13 @@ pub struct SelectionInput {
     pub height: f64,
 }
 
+/// `async` on purpose: a sync command runs on the main thread, i.e. inside the
+/// overlay webview's own IPC callback, and the window work below would then run
+/// inline on a thread that is already nested in a WebView2 callback — the kind
+/// of re-entrancy that wedges the app. As an async command it runs on the async
+/// runtime and every window operation is dispatched normally.
 #[tauri::command]
-pub fn finish_selection(app: AppHandle, rect: SelectionInput) {
+pub async fn finish_selection(app: AppHandle, rect: SelectionInput) {
     let rect = SelectionRect {
         monitor_id: rect.monitor_id,
         x: rect.x.round() as i32,
@@ -202,7 +207,7 @@ pub fn finish_selection(app: AppHandle, rect: SelectionInput) {
 }
 
 #[tauri::command]
-pub fn overlay_ready(app: AppHandle, monitor_id: u32) {
+pub async fn overlay_ready(app: AppHandle, monitor_id: u32) {
     pipeline::overlay_ready(&app, monitor_id);
 }
 

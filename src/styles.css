@@ -947,6 +947,9 @@ body.result-body {
 .result-body {
   flex: 1;
   overflow-y: auto;
+  /* Reserve the scrollbar track unconditionally: when it appears mid-resize the
+     text re-wraps, which used to feed the auto-fit loop and could hang the app. */
+  scrollbar-gutter: stable;
   padding: 14px 14px 8px;
 }
 

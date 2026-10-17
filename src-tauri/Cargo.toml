@@ -54,6 +54,5 @@ windows-future = "0.3"
 codegen-units = 1
 lto = true
 opt-level = "s"
-panic = "abort"
 strip = true
 incremental = false

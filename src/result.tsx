@@ -93,34 +93,64 @@ export function ResultWindow() {
   useEffect(() => {
     const node = root.current;
     if (!node) return;
-    let last = 0;
+
+    // A window that resizes itself in response to its own resize can oscillate
+    // forever (a scrollbar appearing rewraps the text, which changes the height,
+    // which toggles the scrollbar…). Three guards make that impossible: only a
+    // reading seen twice in a row is trusted, only a 4px+ change is worth a
+    // resize, and there is a hard cap per result so a pathological layout can
+    // never spin the main thread.
+    const MAX_FITS = 12;
+    let lastSent = -1;
+    let stable: string | null = null;
+    let sent = 0;
     let raf = 0;
+    let stopped = false;
 
-    const measure = () => {
-      const head = node.querySelector<HTMLElement>(".result-head");
-      const body = node.querySelector<HTMLElement>(".result-body");
-      const foot = node.querySelector<HTMLElement>(".result-foot");
-      const total =
-        (head?.offsetHeight ?? 0) + (body?.scrollHeight ?? 0) + (foot?.offsetHeight ?? 0) + 2;
-      if (total < 80 || Math.abs(total - last) < 3) return;
-      last = total;
-      // Logical pixels: Rust applies `LogicalSize`, so this is CSS pixels.
-      void api.fitResultWindow(window.innerWidth, total).catch(() => undefined);
-    };
-
-    const schedule = () => {
+    function schedule() {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(measure);
-    };
+    }
+
+    function measure() {
+      raf = 0;
+      if (stopped) return;
+      const el = root.current;
+      if (!el) return;
+      const head = el.querySelector<HTMLElement>(".result-head");
+      const body = el.querySelector<HTMLElement>(".result-body");
+      const foot = el.querySelector<HTMLElement>(".result-foot");
+      // `scrollHeight` includes the body's own padding, so this is exactly the
+      // height the content wants at the current width.
+      const total =
+        (head?.offsetHeight ?? 0) + (body?.scrollHeight ?? 0) + (foot?.offsetHeight ?? 0) + 2;
+      if (total < 80) return;
+
+      const key = String(total);
+      if (key !== stable) {
+        // Unsettled reading: wait one more frame before believing it.
+        stable = key;
+        schedule();
+        return;
+      }
+
+      if (sent >= MAX_FITS || Math.abs(total - lastSent) < 4) return;
+      lastSent = total;
+      sent += 1;
+      // Logical pixels: Rust applies `LogicalSize`, so this is CSS pixels.
+      void api.fitResultWindow(window.innerWidth, total).catch(() => undefined);
+      schedule();
+    }
 
     schedule();
+    // No `window.onresize` listener on purpose: our own fit triggers that event,
+    // and the ResizeObserver below already sees every layout change.
     const observer = new ResizeObserver(schedule);
     observer.observe(node);
-    window.addEventListener("resize", schedule);
     return () => {
+      stopped = true;
       cancelAnimationFrame(raf);
       observer.disconnect();
-      window.removeEventListener("resize", schedule);
     };
   }, [payload, stage, config?.ui.resultFontSize, config?.ui.showOriginal]);
 
@@ -182,7 +212,9 @@ export function ResultWindow() {
     : tt("loading");
   const showOriginal = Boolean(config?.ui.showOriginal && payload?.sourceText);
   const fontSize = config?.ui.resultFontSize ?? 14;
-  const canRetry = Boolean(payload && payload.translateProvider !== "none");
+  // Retry stays available for every finished run — a failed OCR, a failed
+  // translation, or simply wanting another attempt with a different model.
+  const canRetry = Boolean(payload) && !busy;
 
   return (
     <div className="result" ref={root}>
@@ -200,9 +232,9 @@ export function ResultWindow() {
       </header>
 
       <div className="result-body">
-        {payload?.error ? <div className="result-error">{payload.error}</div> : null}
+        {payload?.error && !busy ? <div className="result-error">{payload.error}</div> : null}
 
-        {!payload && busy ? (
+        {busy ? (
           <div className="result-skeleton">
             <span style={{ width: "62%" }} />
             <span style={{ width: "88%" }} />
@@ -210,7 +242,7 @@ export function ResultWindow() {
           </div>
         ) : null}
 
-        {payload && !payload.error ? (
+        {payload && !payload.error && !busy ? (
           <>
             {payload.preview ? <img className="result-preview" src={payload.preview} alt="" /> : null}
             <div className="result-text" style={{ fontSize }}>
@@ -234,7 +266,7 @@ export function ResultWindow() {
       </div>
 
       <footer className="result-foot">
-        {payload && !payload.error ? (
+        {payload && !payload.error && !busy ? (
           <button className="btn btn-primary btn-sm" onClick={copy}>
             {copied ? tt("copied") : tt("copy")}
           </button>

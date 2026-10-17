@@ -96,6 +96,56 @@ fn init_logging(dir: &Path) {
     log::set_max_level(levels);
 }
 
+/// Record panics in the log instead of letting them vanish into a GUI build's
+/// missing console. The release profile keeps `panic = "unwind"`, so a panic in
+/// a command or task is contained to that task rather than killing the app.
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("panic: {info}");
+        previous(info);
+    }));
+}
+
+/// Watch for the one failure mode the app cannot recover from on its own: the
+/// main thread stuck inside a webview call, which would leave an overlay
+/// covering the screen with no way to close it. The pipeline cancels abandoned
+/// selections well before this fires, so reaching the limit means the cancel
+/// itself could not run — at that point the process takes itself down rather
+/// than hold the user's screen hostage.
+fn supervise(app: tauri::AppHandle) {
+    use std::time::{Duration, Instant};
+
+    const STUCK_LIMIT: Duration = Duration::from_secs(240);
+
+    let mut busy_since: Option<Instant> = None;
+    loop {
+        std::thread::sleep(Duration::from_secs(10));
+
+        if !app.state::<AppState>().busy.load(Ordering::SeqCst) {
+            busy_since = None;
+            continue;
+        }
+
+        let since = *busy_since.get_or_insert_with(Instant::now);
+        if since.elapsed() < STUCK_LIMIT {
+            continue;
+        }
+
+        log::error!(
+            "截图流程卡住超过 {} 秒，强制退出进程，避免用户无法操作",
+            STUCK_LIMIT.as_secs()
+        );
+        pipeline::notify(
+            &app,
+            "SnapLingo 已自动退出",
+            "截图流程卡住了，程序为避免继续占用屏幕已自动退出，重新打开即可。",
+        );
+        std::thread::sleep(Duration::from_millis(400));
+        std::process::exit(1);
+    }
+}
+
 /* -------------------------------------------------------------------- paths */
 
 fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -138,6 +188,7 @@ pub fn run() {
 
             let dir = config_dir(&handle).map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
             init_logging(&dir);
+            install_panic_hook();
             log::info!("SnapLingo {} starting", env!("CARGO_PKG_VERSION"));
 
             let state = AppState::new(dir)
@@ -149,6 +200,15 @@ pub fn run() {
 
             tray::build(&handle)
                 .map_err(|err| -> Box<dyn std::error::Error> { format!("创建托盘图标失败：{err}").into() })?;
+
+            // Build the webviews the capture flow needs while nothing else is
+            // happening, so a later capture only has to show/hide them.
+            windows::prewarm(&handle);
+            pipeline::spawn_delayed(
+                handle.clone(),
+                std::time::Duration::from_millis(1500),
+                |app| windows::prewarm_overlay(&app),
+            );
 
             match hotkey::apply(&handle, &shortcut) {
                 Ok(()) => log::info!("全局快捷键已注册: {shortcut}"),
@@ -165,6 +225,12 @@ pub fn run() {
             if !ready {
                 windows::show_settings(&handle);
             }
+
+            // Last line of defence: never leave the screen covered forever.
+            std::thread::spawn({
+                let handle = handle.clone();
+                move || supervise(handle)
+            });
 
             Ok(())
         })

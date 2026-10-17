@@ -27,10 +27,26 @@ pub const STAGE_EVENT: &str = "pipeline:stage";
 pub const RESULT_EVENT: &str = "result:update";
 pub const CONFIG_EVENT: &str = "config:changed";
 
+/// Sent to a warm overlay when a new capture is frozen, so the page swaps in the
+/// fresh frame instead of showing the previous one.
+pub const SESSION_EVENT: &str = "session:changed";
+
 /// If a webview has not reported that it painted within this window, reveal the
 /// overlay anyway. Without it a failed page load would leave the app stuck in
 /// "capturing" forever.
 const OVERLAY_READY_TIMEOUT: Duration = Duration::from_millis(1400);
+
+/// How long a frozen session may sit unconfirmed before it cancels itself, so a
+/// forgotten overlay can never leave the hotkey dead.
+const SESSION_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// Hard ceilings on every stage that can stall. Each one ends in a visible,
+/// retryable error rather than a spinner that never stops.
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(15);
+const OCR_TIMEOUT: Duration = Duration::from_secs(30);
+const VISION_TIMEOUT: Duration = Duration::from_secs(120);
+const TRANSLATE_TIMEOUT: Duration = Duration::from_secs(120);
+const JOB_TIMEOUT: Duration = Duration::from_secs(150);
 
 fn emit_stage(app: &AppHandle, stage: Stage, message: Option<&str>, elapsed_ms: u64) {
     let event = StageEvent {
@@ -51,22 +67,27 @@ pub async fn begin_capture(app: AppHandle) {
     let state = app.state::<AppState>();
 
     if state.busy.swap(true, Ordering::SeqCst) {
-        // Already selecting: just bring the overlays back to the front.
-        for label in windows::overlay_labels(&app) {
-            if let Some(window) = app.get_webview_window(&label) {
-                let _ = window.set_focus();
-            }
-        }
+        // Pressing the hotkey again is the way out: the same key that got the
+        // user in gets them out, even when the overlay on the screen they are
+        // looking at is not the one holding focus.
+        log::info!("截图进行中再次触发快捷键：取消本次截图");
+        cancel_capture(&app);
         return;
     }
 
     let cfg = state.config();
-    if !cfg.is_ready() {
+    if !cfg.is_ocr_ready() {
         fail(
             &app,
-            "还没有配置可用的 OCR / 翻译服务。请在设置中填写接口地址、密钥和模型，或把 OCR 切换为「Windows 离线 OCR」。",
+            "还没有可用的 OCR。请在设置里把 OCR 切换为「Windows 离线 OCR」（离线、免费），或填写视觉模型接口的地址、密钥和模型。",
         );
         return;
+    }
+    if !cfg.is_ready() {
+        // Translation is not configured: still take the shot. The recognised
+        // text is worth having on its own, and the translation step reports its
+        // own error (with a retry button) instead of blocking the feature.
+        log::warn!("翻译服务尚未配置完整，本次只做识别");
     }
 
     emit_stage(&app, Stage::Capturing, Some("正在截取屏幕…"), 0);
@@ -74,26 +95,43 @@ pub async fn begin_capture(app: AppHandle) {
     // Our own windows must never appear inside the shot.
     windows::hide_transient(&app);
     // Let the compositor actually remove them before reading the screen.
-    std::thread::sleep(Duration::from_millis(80));
+    // (tokio sleep, not `std::thread::sleep`: this is an async task and the
+    // main thread has to stay free to service the overlay windows.)
+    tokio::time::sleep(Duration::from_millis(80)).await;
 
     let all_monitors = cfg.capture.all_monitors;
     let preview_edge = windows::PREVIEW_LONG_EDGE;
-    let prepared = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<SessionEntry>> {
-        let frames = capture::capture(all_monitors)?;
-        let mut entries = Vec::with_capacity(frames.len());
-        for frame in frames {
-            // Encoded once, here, so opening an overlay is instant.
-            let preview = imageops::scale_to_long_edge(&frame.frame, preview_edge);
-            let preview_data_url = imageops::to_jpeg_data_url(&preview, 82)?;
-            entries.push(SessionEntry {
-                frame,
-                preview,
-                preview_data_url,
-            });
+    let prepared = match tokio::time::timeout(
+        CAPTURE_TIMEOUT,
+        tauri::async_runtime::spawn_blocking(move || -> Result<Vec<SessionEntry>> {
+            let frames = capture::capture(all_monitors)?;
+            let mut entries = Vec::with_capacity(frames.len());
+            for frame in frames {
+                // Encoded once, here, so opening an overlay is instant.
+                let preview = imageops::scale_to_long_edge(&frame.frame, preview_edge);
+                let preview_data_url = imageops::to_jpeg_data_url(&preview, 82)?;
+                entries.push(SessionEntry {
+                    frame,
+                    preview,
+                    preview_data_url,
+                });
+            }
+            Ok(entries)
+        }),
+    )
+    .await
+    {
+        Ok(joined) => joined,
+        Err(_) => {
+            return fail(
+                &app,
+                &format!(
+                    "截取屏幕超过 {} 秒仍未完成，已放弃本次截图。请重试；若一直失败，可尝试关闭占用显卡的程序。",
+                    CAPTURE_TIMEOUT.as_secs()
+                ),
+            )
         }
-        Ok(entries)
-    })
-    .await;
+    };
 
     let entries = match prepared {
         Ok(Ok(entries)) => entries,
@@ -109,6 +147,7 @@ pub async fn begin_capture(app: AppHandle) {
     });
 
     let mut created = 0usize;
+    log::info!("已冻结 {} 个显示器画面，准备框选层", ids.len());
     for id in &ids {
         let frame = {
             let session = lock(&state.session);
@@ -119,7 +158,17 @@ pub async fn begin_capture(app: AppHandle) {
         };
         let Some(frame) = frame else { continue };
         match windows::create_overlay(&app, &frame) {
-            Ok(_) => created += 1,
+            Ok(_) => {
+                created += 1;
+                // A warm overlay still shows the previous capture, so tell it to
+                // pick up the new frame. A freshly built one may not have its
+                // listener attached yet — its own boot fetch covers that case.
+                //
+                // Broadcast (not `window.emit`): listeners registered through the
+                // plain `listen()` helper only see app-wide emits, and every
+                // overlay filters on its own monitor id anyway.
+                let _ = app.emit(SESSION_EVENT, *id);
+            }
             Err(err) => log::warn!("创建截图覆盖层失败（显示器 {id}）: {err}"),
         }
     }
@@ -135,8 +184,15 @@ pub async fn begin_capture(app: AppHandle) {
         if !state.busy.load(Ordering::SeqCst) {
             return;
         }
-        for label in windows::overlay_labels(&app) {
-            if let Some(window) = app.get_webview_window(&label) {
+        // Only this session's monitors: a warm overlay left over from an
+        // earlier capture on another monitor must not reappear with a stale
+        // frame on top of the user's screen.
+        let ids: Vec<u32> = lock(&state.session)
+            .as_ref()
+            .map(|session| session.entries.iter().map(|entry| entry.frame.id).collect())
+            .unwrap_or_default();
+        for id in ids {
+            if let Some(window) = app.get_webview_window(&windows::overlay_label(id)) {
                 if matches!(window.is_visible(), Ok(false)) {
                     let _ = window.show();
                 }
@@ -145,6 +201,27 @@ pub async fn begin_capture(app: AppHandle) {
         if let Some(id) = primary {
             windows::reveal_overlay(&app, id, true);
         }
+    });
+
+    // Safety net: an abandoned selection must never leave the app wedged in
+    // "capturing" (overlays up, hotkey dead) until it is restarted.
+    spawn_delayed(app.clone(), SESSION_TIMEOUT, move |app| {
+        let state = app.state::<AppState>();
+        if !state.busy.load(Ordering::SeqCst) {
+            return;
+        }
+        let stale = lock(&state.session)
+            .as_ref()
+            .map(|session| session.started.elapsed() >= SESSION_TIMEOUT)
+            .unwrap_or(false);
+        if !stale {
+            return;
+        }
+        log::warn!(
+            "框选超过 {} 秒没有确认，自动取消本次截图",
+            SESSION_TIMEOUT.as_secs()
+        );
+        cancel_capture(&app);
     });
 }
 
@@ -159,41 +236,75 @@ pub fn overlay_ready(app: &AppHandle, monitor_id: u32) {
             .map(|entry| entry.frame.id == monitor_id)
             .unwrap_or(false)
     };
+    log::debug!("框选层已绘制（显示器 {monitor_id}，focus={focus}）");
     windows::reveal_overlay(app, monitor_id, focus);
 }
 
 pub fn cancel_capture(app: &AppHandle) {
-    windows::close_overlays(app);
+    windows::hide_overlays(app);
     *lock(&app.state::<AppState>().session) = None;
     app.state::<AppState>().mark_busy(false);
     emit_stage(app, Stage::Idle, None, 0);
 }
 
-/// Selection accepted: crop the frozen frame, drop the overlays, and let the
+/// Selection accepted: crop the frozen frame, hide the overlays, and let the
 /// job run in the background.
 pub fn finish_selection(app: &AppHandle, rect: SelectionRect) {
     let rect = rect.normalized();
     if !rect.is_usable() {
+        log::debug!("选区被忽略（太小）");
         cancel_capture(app);
         return;
     }
 
     let state = app.state::<AppState>();
     let Some(crop) = state.crop_selection(&rect) else {
+        log::warn!("选区无法从缓存帧裁切（显示器 {}）", rect.monitor_id);
         cancel_capture(app);
         return;
     };
 
-    windows::close_overlays(app);
+    log::info!(
+        "已确认选区：显示器 {} {}×{} @({},{})",
+        rect.monitor_id,
+        rect.width,
+        rect.height,
+        rect.x,
+        rect.y
+    );
+
+    windows::hide_overlays(app);
     *lock(&state.session) = None;
     state.mark_busy(false);
+
+    // Cache the crop before the job starts, so "重试" works even if the job is
+    // cut short by a timeout.
+    *lock(&state.last_crop) = Some(crop.clone());
 
     windows::show_result(app);
     emit_stage(app, Stage::Ocr, Some("已截取区域，正在识别…"), 0);
 
+    spawn_job(app, crop);
+}
+
+/// Run OCR + translation in the background, always ending in something the user
+/// can see. A timeout is reported like any other failure, and the crop has
+/// already been cached, so the retry button can pick up from here.
+fn spawn_job(app: &AppHandle, crop: RgbaImage) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        run_job(app, crop).await;
+        if tokio::time::timeout(JOB_TIMEOUT, run_job(app.clone(), crop))
+            .await
+            .is_err()
+        {
+            fail(
+                &app,
+                &format!(
+                    "处理超过 {} 秒仍未完成，已停止本次任务。可以点「重试」再试一次。",
+                    JOB_TIMEOUT.as_secs()
+                ),
+            );
+        }
     });
 }
 
@@ -276,21 +387,39 @@ async fn recognize(
         let prepared = imageops::prepare_for_ocr(crop, &cfg.capture);
         let data_url = imageops::encode_for_ocr(&prepared, &cfg.capture)?;
         let one_shot = cfg.ocr.one_shot && cfg.translate.provider != "none";
-        return providers
-            .vision(&cfg.ocr, &data_url, &cfg.translate.target_lang, one_shot)
-            .await;
+        return match tokio::time::timeout(
+            VISION_TIMEOUT,
+            providers.vision(&cfg.ocr, &data_url, &cfg.translate.target_lang, one_shot),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => bail!(
+                "云端识别超过 {} 秒没有响应。请重试；如果一直超时，可以换用「Windows 离线 OCR」（无需联网）。",
+                VISION_TIMEOUT.as_secs()
+            ),
+        };
     }
 
     // Offline OCR is CPU-bound and synchronous; keep it off the async pool.
     let capture_cfg = cfg.capture.clone();
     let language = cfg.ocr.language.clone();
     let image = crop.clone();
-    let text = tauri::async_runtime::spawn_blocking(move || -> Result<String> {
-        let prepared = imageops::prepare_for_ocr(&image, &capture_cfg);
-        ocr_win::recognize(&prepared, &language)
-    })
+    let text = match tokio::time::timeout(
+        OCR_TIMEOUT,
+        tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+            let prepared = imageops::prepare_for_ocr(&image, &capture_cfg);
+            ocr_win::recognize(&prepared, &language)
+        }),
+    )
     .await
-    .map_err(|err| anyhow!("OCR 线程异常：{err}"))??;
+    {
+        Ok(joined) => joined.map_err(|err| anyhow!("OCR 线程异常：{err}"))??,
+        Err(_) => bail!(
+            "文字识别超过 {} 秒仍未完成。请重试，或框选更小的区域。",
+            OCR_TIMEOUT.as_secs()
+        ),
+    };
 
     if text.trim().is_empty() {
         bail!("没有识别到文字。请尝试框选更清晰、更大的区域。");
@@ -342,7 +471,10 @@ fn publish(app: &AppHandle, cfg: &AppConfig, job: Job, preview: Option<String>, 
     // Keep a breadcrumb in `snaplingo.log` — the window itself can be hidden or
     // dismissed before the user gets to read it.
     match payload.error.as_deref() {
-        Some(err) => log::warn!("SnapLingo: 处理失败 — {err}"),
+        Some(err) => {
+            log::warn!("SnapLingo: 处理失败 — {err}");
+            notify(app, "SnapLingo 处理失败", err);
+        }
         None => log::info!(
             "SnapLingo: 识别 {} 字，翻译 {} 字，耗时 {} ms",
             payload.source_text.chars().count(),
@@ -371,8 +503,14 @@ fn publish(app: &AppHandle, cfg: &AppConfig, job: Job, preview: Option<String>, 
     );
 }
 
-/// Surface a failure the user can actually act on.
+/// Surface a failure the user can actually act on: the result window carries the
+/// message, the log keeps a breadcrumb, and a notification fires so the error is
+/// seen even if no window made it to the screen.
 fn fail(app: &AppHandle, message: &str) {
+    // Whatever went wrong, get out of the capture state completely: no overlay
+    // left on screen, no stale session, hotkey live again.
+    windows::hide_overlays(app);
+    *lock(&app.state::<AppState>().session) = None;
     app.state::<AppState>().mark_busy(false);
     let payload = ResultPayload::error(new_id(), message.to_string(), 0);
     *lock(&app.state::<AppState>().last_result) = Some(payload.clone());
@@ -380,20 +518,49 @@ fn fail(app: &AppHandle, message: &str) {
     let _ = app.emit(RESULT_EVENT, payload);
     emit_stage(app, Stage::Error, Some(message), 0);
     log::warn!("SnapLingo: {message}");
+    notify(app, "SnapLingo 没能完成这次操作", message);
+}
+
+/// Show a system notification, trimmed to something a toast can display.
+pub fn notify(app: &AppHandle, title: &str, body: &str) {
+    use tauri_plugin_notification::NotificationExt;
+
+    let body = body.trim();
+    let body = if body.chars().count() > 160 {
+        body.chars().take(159).collect::<String>() + "…"
+    } else {
+        body.to_string()
+    };
+
+    if let Err(err) = app.notification().builder().title(title).body(body).show() {
+        log::warn!("系统通知发送失败: {err}");
+    }
 }
 
 /// Re-run translation on the last recognised text, no re-selection needed.
 pub async fn retranslate(app: AppHandle) {
-    let (source, preview) = {
+    let (source, crop, preview) = {
         let state = app.state::<AppState>();
         let source = lock(&state.last_source).clone();
-        let preview = lock(&state.last_crop)
+        let crop = lock(&state.last_crop).clone();
+        let preview = crop
             .as_ref()
             .and_then(|crop| imageops::to_preview_data_url(crop).ok());
-        (source, preview)
+        (source, crop, preview)
     };
 
+    // Nothing was recognised last time (or nothing has run yet): replay the
+    // whole job from the cached crop, so "重试" fixes OCR failures too and not
+    // just translation ones.
     let Some(source) = source else {
+        match crop {
+            Some(crop) => {
+                windows::show_result(&app);
+                emit_stage(&app, Stage::Ocr, Some("正在重新识别…"), 0);
+                spawn_job(&app, crop);
+            }
+            None => fail(&app, "还没有可以重试的内容。请先截图一次。"),
+        }
         return;
     };
 
@@ -405,9 +572,21 @@ pub async fn retranslate(app: AppHandle) {
     windows::show_result(&app);
     emit_stage(&app, Stage::Translate, Some("正在重新翻译…"), 0);
 
-    let (translation, error) = match providers.translate(&cfg.translate, &source).await {
-        Ok(text) => (Some(text), None),
-        Err(err) => (None, Some(format!("{err:#}"))),
+    let (translation, error) = match tokio::time::timeout(
+        TRANSLATE_TIMEOUT,
+        providers.translate(&cfg.translate, &source),
+    )
+    .await
+    {
+        Ok(Ok(text)) => (Some(text), None),
+        Ok(Err(err)) => (None, Some(format!("{err:#}"))),
+        Err(_) => (
+            None,
+            Some(format!(
+                "翻译超过 {} 秒没有响应。请重试，或检查网络与接口地址。",
+                TRANSLATE_TIMEOUT.as_secs()
+            )),
+        ),
     };
 
     publish(

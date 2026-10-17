@@ -11,6 +11,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const TRAY_ID: &str = "snap-lingo-tray";
 const ID_CAPTURE: &str = "tray-capture";
+const ID_CANCEL: &str = "tray-cancel";
 const ID_SETTINGS: &str = "tray-settings";
 const ID_HISTORY: &str = "tray-history";
 const ID_AUTOSTART: &str = "tray-autostart";
@@ -31,6 +32,7 @@ fn tray_icon() -> tauri::Result<tauri::image::Image<'static>> {
 
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let capture = MenuItem::with_id(app, ID_CAPTURE, "截图翻译", true, None::<&str>)?;
+    let cancel = MenuItem::with_id(app, ID_CANCEL, "取消本次截图", true, None::<&str>)?;
     let history = MenuItem::with_id(app, ID_HISTORY, "历史记录…", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, ID_SETTINGS, "设置…", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
@@ -47,7 +49,16 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&capture, &history, &settings, &sep1, &startup, &sep2, &quit],
+        &[
+            &capture,
+            &cancel,
+            &history,
+            &settings,
+            &sep1,
+            &startup,
+            &sep2,
+            &quit,
+        ],
     )?;
 
     *lock(&app.state::<TrayMenuState>().autostart) = Some(startup);
@@ -124,6 +135,7 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
                 pipeline::begin_capture(app).await;
             });
         }
+        ID_CANCEL => pipeline::cancel_capture(app),
         ID_HISTORY => {
             windows::show_settings(app);
             let _ = app.emit("ui:navigate", "history");
@@ -145,9 +157,21 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
             let _ = app.emit("config:changed", state.config());
         }
         ID_QUIT => {
-            app.state::<crate::state::AppState>()
-                .quitting
-                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let state = app.state::<crate::state::AppState>();
+            state.quitting.store(true, std::sync::atomic::Ordering::SeqCst);
+            // Drop any overlay first, so quitting never leaves the screen
+            // covered while the process unwinds.
+            pipeline::cancel_capture(app);
+
+            // Belt and braces: if anything refuses to unwind, take the process
+            // down anyway. A tray app the user cannot quit is worse than one
+            // that exits a little abruptly.
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(2500));
+                log::warn!("退出超时，强制结束进程");
+                std::process::exit(0);
+            });
+
             app.exit(0);
         }
         _ => {}

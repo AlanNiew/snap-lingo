@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createRoot } from "react-dom/client";
 
-import { api, currentWindow, monitorIdFromLabel } from "./lib/api";
+import { api, currentWindow, monitorIdFromLabel, onSession } from "./lib/api";
 import { t as translate, type StringKey } from "./lib/i18n";
 import type { SessionImage } from "./lib/types";
 import "./styles.css";
@@ -60,6 +60,31 @@ export function Overlay() {
 
   /* ----------------------------------------------------------- boot the layer */
 
+  const reset = useCallback(() => {
+    shot.current = null;
+    setFrame(null);
+    setAnchor(null);
+    setPointer(null);
+    setDragging(false);
+    setBusy(false);
+    setFailure(null);
+  }, []);
+
+  const load = useCallback(async () => {
+    if (monitorId === null) return;
+    const image = await api.getSessionImage(monitorId);
+    if (!image) {
+      setFailure("no frame");
+      cancel();
+      return;
+    }
+    shot.current = image;
+    setFrame(image);
+    // Rust keeps the window hidden until the frozen frame is painted, so the
+    // user never sees a black flash before the desktop appears.
+    await api.overlayReady(monitorId);
+  }, [cancel, monitorId]);
+
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -76,18 +101,7 @@ export function Overlay() {
       }
 
       try {
-        const image = await api.getSessionImage(monitorId);
-        if (!alive) return;
-        if (!image) {
-          setFailure("no frame");
-          cancel();
-          return;
-        }
-        shot.current = image;
-        setFrame(image);
-        // Rust keeps the window hidden until the frozen frame is painted, so
-        // the user never sees a black flash before the desktop appears.
-        await api.overlayReady(monitorId);
+        await load();
       } catch (error) {
         if (alive) {
           setFailure(String(error));
@@ -98,7 +112,47 @@ export function Overlay() {
     return () => {
       alive = false;
     };
-  }, [cancel, monitorId]);
+  }, [cancel, load, monitorId]);
+
+  // Escape hatch of last resort: if the frozen frame never arrives — a wedged
+  // IPC call, a lost event — close the layer instead of leaving a black sheet
+  // over the desktop with nothing the user can do.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (!shot.current) {
+        setFailure("timeout");
+        cancel();
+      }
+    }, 10000);
+    return () => window.clearTimeout(timer);
+  }, [cancel]);
+
+  // The window is reused for every capture on this monitor, so a new frozen
+  // frame arrives as an event instead of a page load.
+  useEffect(() => {
+    if (monitorId === null) return;
+    let alive = true;
+    let off: (() => void) | null = null;
+    void onSession((id) => {
+      if (id !== monitorId) return;
+      reset();
+      void load().catch((error) => {
+        if (!alive) return;
+        setFailure(String(error));
+        cancel();
+      });
+    }).then((unlisten) => {
+      if (!alive) {
+        unlisten();
+        return;
+      }
+      off = unlisten;
+    });
+    return () => {
+      alive = false;
+      if (off) off();
+    };
+  }, [cancel, load, monitorId, reset]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

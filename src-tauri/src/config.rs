@@ -183,10 +183,17 @@ impl AppConfig {
         }
     }
 
-    /// True when the configured pipeline can actually run without further setup.
+    /// True when a capture can produce something useful — i.e. the selected OCR
+    /// engine is usable. A missing translation only fails the translation step,
+    /// so it does not block taking the shot.
+    pub fn is_ocr_ready(&self) -> bool {
+        self.ocr.provider == "winocr"
+            || (!self.ocr.api_key.trim().is_empty() && !self.ocr.model.trim().is_empty())
+    }
+
+    /// True when the configured pipeline can run end to end without further
+    /// setup. Used for onboarding: the settings window opens when this is false.
     pub fn is_ready(&self) -> bool {
-        let ocr_ok = self.ocr.provider == "winocr"
-            || (!self.ocr.api_key.trim().is_empty() && !self.ocr.model.trim().is_empty());
         let tr_ok = match self.translate.provider.as_str() {
             "none" => true,
             "deepl" => !self.translate.api_key.trim().is_empty(),
@@ -195,7 +202,7 @@ impl AppConfig {
                     && !self.translate.model.trim().is_empty()
             }
         };
-        ocr_ok && tr_ok
+        self.is_ocr_ready() && tr_ok
     }
 }
 
@@ -284,13 +291,17 @@ mod tests {
     #[test]
     fn readiness_requires_keys_only_for_api_paths() {
         let mut cfg = AppConfig::default();
-        assert!(cfg.is_ready(), "offline winocr alone should be usable");
+        // Offline OCR alone is enough to take a shot and recognise text; only
+        // the translation step needs a service, and it reports its own error.
+        assert!(cfg.is_ocr_ready(), "offline winocr alone should be usable");
+        assert!(!cfg.is_ready(), "full readiness still needs a translation path");
 
         cfg.ocr.provider = "vision".into();
-        assert!(!cfg.is_ready(), "vision without key/model must not be ready");
+        assert!(!cfg.is_ocr_ready(), "vision without key/model must not be ready");
 
         cfg.ocr.api_key = "k".into();
         cfg.ocr.model = "m".into();
+        assert!(cfg.is_ocr_ready());
         assert!(!cfg.is_ready(), "translation still needs a key");
 
         cfg.translate.provider = "none".into();
