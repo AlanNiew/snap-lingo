@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SnapLingo",
+  "version": "1.0.0",
+  "identifier": "com.snaplingo.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "SnapLingo",
+    "copyright": "SnapLingo",
+    "category": "Utility",
+    "shortDescription": "轻量级截图 OCR 翻译工具",
+    "longDescription": "SnapLingo 常驻后台，按下快捷键即可框选屏幕任意区域，离线 OCR 识别后调用大模型或 DeepL 翻译，结果一键复制。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

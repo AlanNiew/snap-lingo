@@ -1,0 +1,24 @@
+# ---- Node / frontend ----
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# ---- Rust / Tauri ----
+src-tauri/target/
+src-tauri/gen/
+**/*.rs.bk
+*.pdb
+
+# ---- Logs / temp / OS ----
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# ---- Editors ----
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
