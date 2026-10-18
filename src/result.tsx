@@ -39,6 +39,8 @@ export function ResultWindow() {
   const [copied, setCopied] = useState(false);
   /** Temporary override of the configured view, per result window. */
   const [localView, setLocalView] = useState<ResultView | null>(null);
+  /** Click the picture to inspect it full size. */
+  const [zoom, setZoom] = useState(false);
 
   const root = useRef<HTMLDivElement>(null);
   const autoCopied = useRef<string | null>(null);
@@ -199,14 +201,22 @@ export function ResultWindow() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      // Esc first leaves the enlarged picture, and only then the window: it is
+      // the same "back out one step" the user expects from the overlay.
+      setZoom((wasZoomed) => {
+        if (wasZoomed) return false;
         void api.hideResult().catch(() => undefined);
-      }
+        return false;
+      });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // A new result starts unzoomed.
+  useEffect(() => setZoom(false), [payload?.id]);
 
   /* ------------------------------------------------------------------ render */
 
@@ -237,10 +247,13 @@ export function ResultWindow() {
     { id: "translation", key: "viewTranslation" },
     { id: "both", key: "viewBoth" },
   ];
+  // The picture is there to check the translation against the original, so it
+  // is pointless in source-only mode (the original text *is* the content then).
+  const showShot = Boolean(payload?.preview) && view !== "source";
 
   return (
     <div className="result" ref={root}>
-      <header className="result-head" data-tauri-drag-region>
+      <header className="result-head" data-tauri-drag-region="deep">
         <span className="result-title">
           {tt("translation")} · {payload?.targetLang || tt("empty")}
         </span>
@@ -249,6 +262,23 @@ export function ResultWindow() {
           <span>{busy ? stageText : payload?.error ? tt("resultError") : tt("resultDone")}</span>
           {done ? <span className="nav-count">{formatDuration(payload?.elapsedMs ?? 0)}</span> : null}
         </span>
+        <button
+          type="button"
+          className="result-close"
+          title={tt("close")}
+          aria-label={tt("close")}
+          onClick={() => void api.hideResult().catch(() => undefined)}
+        >
+          <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+            <path
+              d="M3.2 3.2l9.6 9.6M12.8 3.2l-9.6 9.6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
       </header>
 
       <div className="result-body">
@@ -263,35 +293,41 @@ export function ResultWindow() {
         ) : null}
 
         {done ? (
-          <>
-            {payload?.preview ? <img className="result-preview" src={payload.preview} alt="" /> : null}
-
-            {view !== "source" ? (
-              <section className="result-pane">
-                {view === "both" ? <div className="result-pane-label">{tt("viewTranslation")}</div> : null}
-                <div className="result-text" style={{ fontSize }}>
-                  {targetText ? targetText : <span className="result-placeholder">{tt("noTranslation")}</span>}
-                </div>
-              </section>
+          <div className="result-columns">
+            {showShot ? (
+              <figure className="result-shot" data-zoom={zoom} onClick={() => setZoom((was) => !was)}>
+                <img src={payload?.preview ?? undefined} alt="" />
+              </figure>
             ) : null}
 
-            {view === "both" && sourceText ? <div className="result-divider" /> : null}
+            <div className="result-text-col">
+              {view !== "source" ? (
+                <section className="result-pane">
+                  {view === "both" ? <div className="result-pane-label">{tt("viewTranslation")}</div> : null}
+                  <div className="result-text" style={{ fontSize }}>
+                    {targetText ? targetText : <span className="result-placeholder">{tt("noTranslation")}</span>}
+                  </div>
+                </section>
+              ) : null}
 
-            {view !== "translation" ? (
-              <section className="result-pane">
-                {view === "both" ? <div className="result-pane-label">{tt("viewSource")}</div> : null}
-                <div className="result-src-text" style={view === "source" ? { fontSize } : undefined}>
-                  {sourceText ? sourceText : <span className="result-placeholder">{tt("empty")}</span>}
-                </div>
-              </section>
-            ) : null}
+              {view === "both" && sourceText ? <div className="result-divider" /> : null}
 
-            <div className="result-meta">
-              {ocrLabel ? <span className="badge">{ocrLabel}</span> : null}
-              {providerLabel ? <span className="badge badge-accent">{providerLabel}</span> : null}
-              {payload?.model ? <span className="badge">{payload.model}</span> : null}
+              {view !== "translation" ? (
+                <section className="result-pane">
+                  {view === "both" ? <div className="result-pane-label">{tt("viewSource")}</div> : null}
+                  <div className="result-src-text" style={view === "source" ? { fontSize } : undefined}>
+                    {sourceText ? sourceText : <span className="result-placeholder">{tt("empty")}</span>}
+                  </div>
+                </section>
+              ) : null}
+
+              <div className="result-meta">
+                {ocrLabel ? <span className="badge">{ocrLabel}</span> : null}
+                {providerLabel ? <span className="badge badge-accent">{providerLabel}</span> : null}
+                {payload?.model ? <span className="badge">{payload.model}</span> : null}
+              </div>
             </div>
-          </>
+          </div>
         ) : null}
       </div>
 

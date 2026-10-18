@@ -103,9 +103,14 @@ pub fn scale_to_long_edge(img: &RgbaImage, max: u32) -> RgbaImage {
     )
 }
 
-/// Tiny inline thumbnail shown in the result window and history list.
+/// Inline preview shown next to the translation in the result window.
+///
+/// The long edge is generous (see `PREVIEW_LONG_EDGE`) so the picture stays
+/// legible when it is displayed side by side with the text instead of as a
+/// thumbnail. Quantum is kept high for the same reason: this is what the user
+/// compares the translation against.
 pub fn to_preview_data_url(img: &RgbaImage) -> anyhow::Result<String> {
-    const PREVIEW_LONG_EDGE: u32 = 260;
+    const PREVIEW_LONG_EDGE: u32 = 1440;
     let (w, h) = img.dimensions();
     let long = w.max(h);
     let small = if long > PREVIEW_LONG_EDGE {
@@ -114,12 +119,12 @@ pub fn to_preview_data_url(img: &RgbaImage) -> anyhow::Result<String> {
             img,
             ((w as f32 * f).round() as u32).max(1),
             ((h as f32 * f).round() as u32).max(1),
-            FilterType::Triangle,
+            FilterType::CatmullRom,
         )
     } else {
         img.clone()
     };
-    to_jpeg_data_url(&small, 72)
+    to_jpeg_data_url(&small, 88)
 }
 
 /// Flatten RGBA onto an opaque background. Needed by the Windows OCR engine,

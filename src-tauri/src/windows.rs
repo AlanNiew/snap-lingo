@@ -69,8 +69,8 @@ pub fn result_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     }
     WebviewWindowBuilder::new(app, RESULT, WebviewUrl::App("result.html".into()))
         .title("SnapLingo 翻译结果")
-        .inner_size(560.0, 400.0)
-        .min_inner_size(360.0, 220.0)
+        .inner_size(820.0, 480.0)
+        .min_inner_size(420.0, 260.0)
         .decorations(false)
         .transparent(true)
         .shadow(false)

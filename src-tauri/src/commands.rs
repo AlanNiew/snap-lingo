@@ -279,8 +279,8 @@ pub fn hide_result(app: AppHandle) {
 #[tauri::command]
 pub fn fit_result_window(app: AppHandle, width: f64, height: f64) {
     if let Some(window) = app.get_webview_window(windows::RESULT) {
-        let width = width.clamp(360.0, 900.0);
-        let height = height.clamp(200.0, 820.0);
+        let width = width.clamp(420.0, 1360.0);
+        let height = height.clamp(220.0, 900.0);
         let _ = window.set_size(tauri::LogicalSize::new(width, height));
     }
 }

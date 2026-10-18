@@ -923,6 +923,10 @@ body.result-body {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Never let the header or the footer be squeezed: in a flex column they
+     shrink below their content by default, which is what used to clip the
+     bottom button row when the content was tall. */
+  flex: 0 0 auto;
   padding: 8px 10px 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-2);
@@ -944,13 +948,102 @@ body.result-body {
   font-size: 12px;
 }
 
+/* Title bar ×: the window has no native chrome, so it needs its own. */
+.result-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.result-close:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
 .result-body {
   flex: 1;
+  /* Required for a scrolling flex child, otherwise it refuses to shrink and
+     pushes the footer out of the window. */
+  min-height: 0;
   overflow-y: auto;
   /* Reserve the scrollbar track unconditionally: when it appears mid-resize the
      text re-wraps, which used to feed the auto-fit loop and could hang the app. */
   scrollbar-gutter: stable;
   padding: 14px 14px 8px;
+}
+
+/* Picture on the left, text on the right: reading them side by side is the
+   whole point of the window. Falls back to a single column when narrow. */
+.result-columns {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.result-text-col {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.result-shot {
+  flex: 0 0 auto;
+  margin: 0;
+  width: clamp(180px, 42%, 420px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.result-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Click the picture to read it at full size (crop out the small window). */
+.result-shot[data-zoom="true"] {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  width: auto;
+  border: 0;
+  border-radius: 0;
+  background: rgba(12, 14, 18, 0.92);
+  cursor: zoom-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.result-shot[data-zoom="true"] img {
+  width: auto;
+  max-width: 94vw;
+  max-height: 92vh;
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 560px) {
+  .result-columns {
+    flex-direction: column;
+  }
+
+  .result-shot {
+    width: 100%;
+  }
 }
 
 .result-text {
@@ -996,6 +1089,8 @@ body.result-body {
 .result-foot {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 9px 12px;
   border-top: 1px solid var(--border);
@@ -1093,16 +1188,6 @@ body.result-body {
   to {
     background-position: -200% 0;
   }
-}
-
-.result-preview {
-  width: 100%;
-  max-height: 96px;
-  object-fit: cover;
-  object-position: left top;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  margin-bottom: 12px;
 }
 
 .result-meta {
