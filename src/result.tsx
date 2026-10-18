@@ -135,11 +135,21 @@ export function ResultWindow() {
       if (!el) return;
       const head = el.querySelector<HTMLElement>(".result-head");
       const body = el.querySelector<HTMLElement>(".result-body");
-      // `scrollHeight` includes the body's own padding *and* the sticky footer,
-      // so this is exactly the height the content wants at the current width.
-      // The extra few pixels are slack for rounding: being one pixel short is
-      // what used to shave the bottom button row.
-      const total = (head?.offsetHeight ?? 0) + (body?.scrollHeight ?? 0) + 4;
+      const content = el.querySelector<HTMLElement>(".result-content");
+      const foot = el.querySelector<HTMLElement>(".result-foot");
+      // Measure the *content* box, never the scroll container: `scrollHeight` is
+      // clamped to the container height once the window is too tall, which made
+      // the window unable to shrink and left dead space under the footer.
+      const style = body ? getComputedStyle(body) : null;
+      const padY = style
+        ? parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+        : 0;
+      const total =
+        (head?.offsetHeight ?? 0) +
+        (content?.offsetHeight ?? 0) +
+        padY +
+        (foot?.offsetHeight ?? 0) +
+        4; // the card's 1px border on both sides + rounding slack
       if (total < 80) return;
 
       const key = String(total);
@@ -287,7 +297,8 @@ export function ResultWindow() {
       </header>
 
       <div className="result-body">
-        {payload?.error && !busy ? <div className="result-error">{payload.error}</div> : null}
+        <div className="result-content">
+          {payload?.error && !busy ? <div className="result-error">{payload.error}</div> : null}
 
         {busy ? (
           <div className="result-skeleton">
@@ -333,7 +344,10 @@ export function ResultWindow() {
           </>
         ) : null}
 
-        <footer className="result-foot">
+        </div>
+      </div>
+
+      <footer className="result-foot">
           {payload && !payload.error ? (
             <div className="result-view" role="group" aria-label={tt("resultView")}>
               {viewOptions.map((option) => (
@@ -381,8 +395,7 @@ export function ResultWindow() {
           <button className="btn btn-sm btn-ghost" onClick={() => void api.hideResult()}>
             {tt("close")}
           </button>
-        </footer>
-      </div>
+      </footer>
     </div>
   );
 }

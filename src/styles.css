@@ -973,16 +973,22 @@ body.result-body {
 }
 
 .result-body {
+  /* The scroller: `flex: 1` + `min-height: 0` lets it shrink so the footer is
+     never pushed out of the window, however tall the content gets. */
   flex: 1;
-  /* Required for a scrolling flex child, otherwise it refuses to shrink and
-     pushes the footer out of the window. */
   min-height: 0;
   overflow-y: auto;
   /* Reserve the scrollbar track unconditionally: when it appears mid-resize the
      text re-wraps, which used to feed the auto-fit loop and could hang the app. */
   scrollbar-gutter: stable;
-  /* No bottom padding: the footer bleeds to the edges. */
-  padding: 14px 14px 0;
+  padding: 14px 14px 10px;
+}
+
+/* Plain wrapper for the result content: its height is the natural content
+   height, which is what the auto-fit measures (never the scroller's). */
+.result-content {
+  display: flex;
+  flex-direction: column;
 }
 
 /* The captured picture sits above the text as a full-width strip, capped so a
@@ -1074,17 +1080,14 @@ body.result-body {
    content, the footer stays glued to the bottom instead of being pushed out of
    the window by the text above it. */
 .result-foot {
-  position: sticky;
-  bottom: 0;
-  z-index: 6;
+  /* A normal flex row at the end of the card: it always sits flush with the
+     bottom edge, and `flex-shrink: 0` keeps it from ever being squashed. */
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  /* Bleed to the window edges: the body is padded, the footer is not. The
-     bottom gets a little more room so the buttons never hug the window edge. */
-  margin: 14px -14px 0;
-  padding: 11px 12px 16px;
+  padding: 11px 14px 16px;
   border-top: 1px solid var(--border);
   background: var(--surface-2);
 }
