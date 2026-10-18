@@ -48,7 +48,7 @@ export const EMPTY_PROFILE: TranslateProfile = {
   apiSecret: "",
   region: "",
   model: "",
-  imageTranslate: true,
+  imageTranslate: false,
   modelTier: "",
 };
 

@@ -60,15 +60,11 @@ pub struct TranslateProfile {
     pub model: String,
     /// Youdao / Baidu / Tencent can read the picture themselves: one call does
     /// OCR *and* translation. Defaults to on for those three engines.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub image_translate: bool,
     /// Service tier of the engine: `standard` / `llm` (Baidu, Youdao) or
     /// `llm` / `lite` (Tencent). Empty means the engine's own default.
     pub model_tier: String,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Default for TranslateProfile {
@@ -79,9 +75,10 @@ impl Default for TranslateProfile {
             api_secret: String::new(),
             region: String::new(),
             model: String::new(),
-            // One-step picture translation is the better default for the three
-            // services that support it: nothing else has to be installed.
-            image_translate: true,
+            // One-step picture translation is opt-in: it needs the provider to
+            // have the picture service opened, and the plain text path works
+            // everywhere.
+            image_translate: false,
             model_tier: String::new(),
         }
     }
@@ -320,7 +317,7 @@ impl AppConfig {
             api_secret: std::mem::take(&mut self.translate.api_secret),
             region: std::mem::take(&mut self.translate.region),
             model: std::mem::take(&mut self.translate.model),
-            image_translate: true,
+            image_translate: false,
             model_tier: String::new(),
         };
         if !legacy.is_blank() {
@@ -352,7 +349,7 @@ impl AppConfig {
         if openai.model.trim().is_empty() {
             openai.model = DEFAULT_TEXT_MODEL.into();
         }
-        for p in self.translate.profiles.values_mut() {
+        for (id, p) in self.translate.profiles.iter_mut() {
             p.base_url = p.base_url.trim().trim_end_matches('/').to_string();
             p.api_key = p.api_key.trim().to_string();
             p.api_secret = p.api_secret.trim().to_string();
@@ -363,6 +360,11 @@ impl AppConfig {
                 "llm" | "lite" | "standard" => p.model_tier.trim().to_string(),
                 _ => String::new(),
             };
+            // Only these three services can read a picture; keep the flag off
+            // everywhere else so switching engines cannot carry it over.
+            if !matches!(id.as_str(), "youdao" | "baidu" | "tencent") {
+                p.image_translate = false;
+            }
         }
         if self.translate.target_lang.trim().is_empty() {
             self.translate.target_lang = "zh-CN".into();
@@ -485,8 +487,12 @@ mod tests {
         let mut cfg = AppConfig::default();
         cfg.ocr.provider = "vision".into();
         cfg.translate.provider = "youdao".into();
+        // Opt-in: the text path stays the default for every engine.
+        assert!(!cfg.translate.uses_image_translate());
+
+        cfg.translate.profile_mut("youdao").image_translate = true;
         cfg.sanitize();
-        // Youdao reads the picture itself, so no local OCR engine is needed.
+        // With the picture path on, no local OCR engine is needed.
         assert!(cfg.translate.uses_image_translate());
         assert!(cfg.is_ocr_ready());
 

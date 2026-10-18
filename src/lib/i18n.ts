@@ -164,8 +164,8 @@ const STRINGS = {
   ],
   imageTranslate: ["一步翻译图片", "Translate the picture in one call"],
   imageTranslateHint: [
-    "所选渠道直接读取整张图片并翻译（识别与翻译一次完成），不依赖本机 OCR；图片里的排版会被保留在译文对应关系里。关闭后改为「先识别、再翻译」。",
-    "The service reads the whole picture and translates it in one call, so no local OCR is needed. Turn it off to go back to recognise-then-translate.",
+    "所选渠道直接读取整张图片并翻译（识别与翻译一次完成），不依赖本机 OCR。需要该渠道已开通「图片翻译」服务（有道 / 百度 / 腾讯都要在控制台单独申请）；若该服务不可用，本次会自动回退到「本机识别 + 文本翻译」。",
+    "The service reads the whole picture and translates it in one call, so no local OCR is needed. The provider's picture-translation service has to be enabled first (a separate application on Youdao / Baidu / Tencent). If it fails, the capture falls back to local OCR plus text translation automatically.",
   ],
   tierTitle: ["服务版本", "Service tier"],
   tierStandard: ["通用翻译", "Standard"],

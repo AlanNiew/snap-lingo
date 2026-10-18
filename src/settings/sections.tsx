@@ -296,7 +296,7 @@ function EndpointFields({
 function usesPictureTranslate(config: AppConfig): boolean {
   const provider = config.translate.provider;
   if (provider !== "youdao" && provider !== "baidu" && provider !== "tencent") return false;
-  return config.translate.profiles?.[provider]?.imageTranslate ?? true;
+  return config.translate.profiles?.[provider]?.imageTranslate ?? false;
 }
 
 export function OcrSection({ config, patch, notify, languages }: Base & { languages: OcrLanguage[] }) {

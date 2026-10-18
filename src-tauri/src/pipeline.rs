@@ -343,28 +343,46 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
             Some("正在识别并翻译图片…"),
             started.elapsed().as_millis() as u64,
         );
-        let job = match picture_translate(&cfg, &providers, &crop).await {
-            Ok((source, translation)) => Job {
-                source: Some(source),
-                translation: Some(translation),
-                ocr_provider: "image".into(),
-                model: String::new(),
-                error: None,
-            },
-            Err(err) => Job {
-                source: None,
-                translation: None,
-                ocr_provider: "image".into(),
-                model: String::new(),
-                error: Some(format!("{err:#}")),
-            },
-        };
-        if let Some(source) = job.source.clone() {
-            *lock(&app.state::<AppState>().last_source) = Some(source);
+        match picture_translate(&cfg, &providers, &crop).await {
+            Ok((source, translation)) => {
+                let job = Job {
+                    source: Some(source),
+                    translation: Some(translation),
+                    ocr_provider: "image".into(),
+                    model: String::new(),
+                    error: None,
+                };
+                *lock(&app.state::<AppState>().last_source) = job.source.clone();
+                *lock(&app.state::<AppState>().last_crop) = Some(crop);
+                publish(&app, &cfg, job, preview, started.elapsed());
+                return;
+            }
+            Err(err) if !cfg.is_ocr_ready() => {
+                // Nothing to fall back to: report the service error as-is.
+                *lock(&app.state::<AppState>().last_crop) = Some(crop);
+                let job = Job {
+                    source: None,
+                    translation: None,
+                    ocr_provider: "image".into(),
+                    model: String::new(),
+                    error: Some(format!("{err:#}")),
+                };
+                publish(&app, &cfg, job, preview, started.elapsed());
+                return;
+            }
+            Err(err) => {
+                // The one-step service refused the job (service not opened,
+                // quota, …) but a local OCR path exists: fall through to it so
+                // the capture still produces something useful.
+                log::warn!("一步图片翻译失败（{err:#}），改用本机识别 + 文本翻译");
+                emit_stage(
+                    &app,
+                    Stage::Ocr,
+                    Some("图片翻译失败，改用本机识别…"),
+                    started.elapsed().as_millis() as u64,
+                );
+            }
         }
-        *lock(&app.state::<AppState>().last_crop) = Some(crop);
-        publish(&app, &cfg, job, preview, started.elapsed());
-        return;
     }
 
     match recognize(&app, &cfg, &providers, &crop).await {
