@@ -26,7 +26,7 @@ export interface TranslateEngine {
   applyUrl: string;
   keyPlaceholder: string;
   /** The service can read the picture itself: OCR + translation in one call. */
-  imageTranslate?: boolean;
+  picture?: boolean;
   /** Service tiers the user may pick between (e.g. Baidu's standard vs LLM). */
   tiers?: Array<{ value: string; labelKey: StringKey }>;
 }
@@ -76,7 +76,7 @@ export const TRANSLATE_ENGINES: TranslateEngine[] = [
     fields: ["apiKey", "apiSecret"],
     applyUrl: "https://ai.youdao.com/console/#/app-overview",
     keyPlaceholder: "应用 ID",
-    imageTranslate: true,
+    picture: true,
     tiers: [
       { value: "llm", labelKey: "tierLlm" },
       { value: "standard", labelKey: "tierStandard" },
@@ -89,7 +89,7 @@ export const TRANSLATE_ENGINES: TranslateEngine[] = [
     fields: ["apiKey", "apiSecret"],
     applyUrl: "https://fanyi-api.baidu.com/",
     keyPlaceholder: "AppID",
-    imageTranslate: true,
+    picture: true,
     tiers: [
       { value: "standard", labelKey: "tierStandard" },
       { value: "llm", labelKey: "tierLlm" },
@@ -102,7 +102,7 @@ export const TRANSLATE_ENGINES: TranslateEngine[] = [
     fields: ["apiKey", "apiSecret", "region"],
     applyUrl: "https://console.cloud.tencent.com/cam/capi",
     keyPlaceholder: "SecretId",
-    imageTranslate: true,
+    picture: true,
     tiers: [
       { value: "llm", labelKey: "tierLlm" },
       { value: "lite", labelKey: "tierLite" },
@@ -122,14 +122,43 @@ export function engineMeta(id: TranslateProvider): TranslateEngine | undefined {
   return TRANSLATE_ENGINES.find((engine) => engine.id === id);
 }
 
+/** Which inputs an OCR engine needs, in the order they are shown. */
+export type OcrField = "baseUrl" | "apiKey" | "model" | "language";
+
 export interface OcrEngine {
   id: OcrProvider;
   titleKey: StringKey;
   descKey: StringKey;
+  fields: OcrField[];
+  /** Page that explains / provides the service (opened from a button). */
+  applyUrl?: string;
 }
 
-/** The two OCR paths, listed in the engine dropdown. */
+/** Every OCR path, listed in the engine dropdown. */
 export const OCR_ENGINES: OcrEngine[] = [
-  { id: "winocr", titleKey: "ocrWin", descKey: "ocrWinDesc" },
-  { id: "vision", titleKey: "ocrVision", descKey: "ocrVisionDesc" },
+  {
+    id: "winocr",
+    titleKey: "ocrWin",
+    descKey: "ocrWinDesc",
+    fields: ["language"],
+  },
+  {
+    id: "vision",
+    titleKey: "ocrVision",
+    descKey: "ocrVisionDesc",
+    fields: ["baseUrl", "apiKey", "model"],
+  },
+  {
+    id: "local",
+    titleKey: "ocrLocal",
+    descKey: "ocrLocalDesc",
+    fields: ["baseUrl"],
+    applyUrl: "https://github.com/hiroi-sora/Umi-OCR/releases",
+  },
+  {
+    id: "picture",
+    titleKey: "ocrPicture",
+    descKey: "ocrPictureDesc",
+    fields: [],
+  },
 ];

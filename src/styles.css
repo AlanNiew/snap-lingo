@@ -915,7 +915,8 @@ body.result-body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: var(--shadow-lg);
+  /* No shadow: the window itself is transparent, so a shadow would show up as a
+     grey ring around the card. Without decorations the border is enough. */
   overflow: hidden;
 }
 

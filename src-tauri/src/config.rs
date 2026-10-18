@@ -14,11 +14,15 @@ pub const DEFAULT_SHORTCUT: &str = "Ctrl+Alt+Z";
 /// the `openai` translation engine when the user has not typed one.
 pub const DEFAULT_OPENAI_BASE_URL: &str = "https://integrate.api.nvidia.com/v1";
 pub const DEFAULT_TEXT_MODEL: &str = "nvidia/nemotron-3-ultra-550b-a55b";
+/// Local HTTP OCR service (Umi-OCR ships this endpoint by default).
+pub const DEFAULT_LOCAL_OCR_URL: &str = "http://127.0.0.1:1224";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct OcrConfig {
-    /// `vision` = multimodal LLM, `winocr` = offline Windows OCR engine.
+    /// `winocr` = offline Windows OCR engine, `vision` = multimodal LLM,
+    /// `picture` = the translation engine reads the picture itself (one step),
+    /// `local` = a local HTTP OCR service (Umi-OCR and compatible servers).
     pub provider: String,
     pub base_url: String,
     pub api_key: String,
@@ -58,10 +62,6 @@ pub struct TranslateProfile {
     /// Azure Translator region, Tencent region.
     pub region: String,
     pub model: String,
-    /// Youdao / Baidu / Tencent can read the picture themselves: one call does
-    /// OCR *and* translation. Defaults to on for those three engines.
-    #[serde(default)]
-    pub image_translate: bool,
     /// Service tier of the engine: `standard` / `llm` (Baidu, Youdao) or
     /// `llm` / `lite` (Tencent). Empty means the engine's own default.
     pub model_tier: String,
@@ -75,10 +75,6 @@ impl Default for TranslateProfile {
             api_secret: String::new(),
             region: String::new(),
             model: String::new(),
-            // One-step picture translation is opt-in: it needs the provider to
-            // have the picture service opened, and the plain text path works
-            // everywhere.
-            image_translate: false,
             model_tier: String::new(),
         }
     }
@@ -154,13 +150,6 @@ impl TranslateConfig {
     /// Settings of the engine that is currently selected.
     pub fn active(&self) -> TranslateProfile {
         self.profile(&self.provider)
-    }
-
-    /// True when the selected engine translates the picture itself, which skips
-    /// the local OCR step completely.
-    pub fn uses_image_translate(&self) -> bool {
-        matches!(self.provider.as_str(), "youdao" | "baidu" | "tencent")
-            && self.active().image_translate
     }
 }
 
@@ -285,7 +274,10 @@ impl AppConfig {
         if self.shortcut.trim().is_empty() {
             self.shortcut = DEFAULT_SHORTCUT.into();
         }
-        if self.ocr.provider != "vision" {
+        if !matches!(
+            self.ocr.provider.as_str(),
+            "winocr" | "vision" | "picture" | "local"
+        ) {
             self.ocr.provider = "winocr".into();
         }
         if !matches!(
@@ -307,6 +299,11 @@ impl AppConfig {
         if self.ocr.base_url.trim().is_empty() {
             self.ocr.base_url = DEFAULT_OPENAI_BASE_URL.into();
         }
+        // Switching to the local service should not leave the OpenAI endpoint
+        // behind just because it used to be the default.
+        if self.ocr.provider == "local" && self.ocr.base_url == DEFAULT_OPENAI_BASE_URL {
+            self.ocr.base_url = DEFAULT_LOCAL_OCR_URL.into();
+        }
         self.ocr.base_url = self.ocr.base_url.trim_end_matches('/').to_string();
         // Configs written before per-engine profiles carried a single flat set of
         // credentials. Fold them into the profile of the engine that was selected
@@ -317,7 +314,6 @@ impl AppConfig {
             api_secret: std::mem::take(&mut self.translate.api_secret),
             region: std::mem::take(&mut self.translate.region),
             model: std::mem::take(&mut self.translate.model),
-            image_translate: false,
             model_tier: String::new(),
         };
         if !legacy.is_blank() {
@@ -349,7 +345,7 @@ impl AppConfig {
         if openai.model.trim().is_empty() {
             openai.model = DEFAULT_TEXT_MODEL.into();
         }
-        for (id, p) in self.translate.profiles.iter_mut() {
+        for p in self.translate.profiles.values_mut() {
             p.base_url = p.base_url.trim().trim_end_matches('/').to_string();
             p.api_key = p.api_key.trim().to_string();
             p.api_secret = p.api_secret.trim().to_string();
@@ -360,26 +356,44 @@ impl AppConfig {
                 "llm" | "lite" | "standard" => p.model_tier.trim().to_string(),
                 _ => String::new(),
             };
-            // Only these three services can read a picture; keep the flag off
-            // everywhere else so switching engines cannot carry it over.
-            if !matches!(id.as_str(), "youdao" | "baidu" | "tencent") {
-                p.image_translate = false;
-            }
         }
         if self.translate.target_lang.trim().is_empty() {
             self.translate.target_lang = "zh-CN".into();
         }
     }
 
+    /// The translation engine that reads the picture itself, when the OCR
+    /// engine is set to `picture` and the selected service supports it.
+    pub fn picture_provider(&self) -> Option<&'static str> {
+        match self.translate.provider.as_str() {
+            "youdao" => Some("youdao"),
+            "baidu" => Some("baidu"),
+            "tencent" => Some("tencent"),
+            _ => None,
+        }
+    }
+
+    /// True when OCR *and* translation are done by the translation service in a
+    /// single request (no local OCR engine involved).
+    pub fn uses_picture_translate(&self) -> bool {
+        self.ocr.provider == "picture" && self.picture_provider().is_some()
+    }
+
     /// True when a capture can produce something useful — i.e. the selected OCR
     /// engine is usable. A missing translation only fails the translation step,
     /// so it does not block taking the shot.
     pub fn is_ocr_ready(&self) -> bool {
-        // A one-step picture translator reads the picture itself, so it works
-        // without any local OCR engine being available.
-        self.translate.uses_image_translate()
-            || self.ocr.provider == "winocr"
-            || (!self.ocr.api_key.trim().is_empty() && !self.ocr.model.trim().is_empty())
+        match self.ocr.provider.as_str() {
+            // The picture translator reads the image itself, so it works
+            // without any local OCR engine — but only with a service that can.
+            "picture" => self.uses_picture_translate(),
+            // Windows ships this engine; nothing to configure.
+            "winocr" => true,
+            // Local HTTP OCR service: the endpoint is all we need.
+            "local" => !self.ocr.base_url.trim().is_empty(),
+            // Multimodal model: needs credentials.
+            _ => !self.ocr.api_key.trim().is_empty() && !self.ocr.model.trim().is_empty(),
+        }
     }
 
     /// True when the configured pipeline can run end to end without further
@@ -485,23 +499,30 @@ mod tests {
     #[test]
     fn picture_translation_skips_ocr_requirements() {
         let mut cfg = AppConfig::default();
+        // The multimodal engine needs a key and a model.
         cfg.ocr.provider = "vision".into();
+        assert!(!cfg.is_ocr_ready());
+
+        // Choosing the picture engine hands the work to the translation
+        // service, so no local OCR engine is needed at all.
         cfg.translate.provider = "youdao".into();
-        // Opt-in: the text path stays the default for every engine.
-        assert!(!cfg.translate.uses_image_translate());
-
-        cfg.translate.profile_mut("youdao").image_translate = true;
+        cfg.ocr.provider = "picture".into();
         cfg.sanitize();
-        // With the picture path on, no local OCR engine is needed.
-        assert!(cfg.translate.uses_image_translate());
+        assert!(cfg.uses_picture_translate());
         assert!(cfg.is_ocr_ready());
+        assert_eq!(cfg.picture_provider(), Some("youdao"));
 
-        cfg.translate.profile_mut("youdao").image_translate = false;
-        assert!(!cfg.translate.uses_image_translate());
-        assert!(!cfg.is_ocr_ready(), "without the picture path the OCR key is required");
-
+        // An engine that cannot read a picture leaves the pipeline without OCR.
         cfg.translate.provider = "openai".into();
-        assert!(!cfg.translate.uses_image_translate());
+        assert!(!cfg.uses_picture_translate());
+        assert!(!cfg.is_ocr_ready());
+
+        // A local OCR service only needs its endpoint.
+        cfg.ocr.provider = "local".into();
+        cfg.sanitize();
+        assert!(!cfg.uses_picture_translate());
+        assert!(cfg.is_ocr_ready());
+        assert_eq!(cfg.ocr.base_url, DEFAULT_LOCAL_OCR_URL);
     }
 
     #[test]

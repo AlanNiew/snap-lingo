@@ -60,6 +60,16 @@ const STRINGS = {
     "把图片发给多模态模型，对艺术字、屏幕截图、复杂排版识别更准。需要一个 OpenAI 兼容接口。",
     "Sends the image to a multimodal model. Better on stylised text and complex layouts. Needs an OpenAI-compatible endpoint.",
   ],
+  ocrLocal: ["本地 OCR 服务", "Local OCR service"],
+  ocrLocalDesc: [
+    "连接本机运行的离线识别服务（Umi-OCR 及同类服务）。模型跑在自己电脑上，图片不出本机，体积小、可随时关掉。需先在服务里开启 HTTP 接口。",
+    "Talks to an offline recognition service running on this machine (Umi-OCR and compatible servers). The model runs locally, the picture never leaves the machine. Enable its HTTP interface first.",
+  ],
+  ocrPicture: ["由翻译渠道完成（一步图片翻译）", "Handled by the translation service (one step)"],
+  ocrPictureDesc: [
+    "把图片直接交给翻译渠道，识别与翻译一次完成，不使用本机 OCR。需要有道 / 百度 / 腾讯的「图片翻译」服务（在各自控制台单独申请）。",
+    "Sends the picture straight to the translation service, which reads and translates it in one call. Requires the picture-translation service of Youdao / Baidu / Tencent (applied for separately in their consoles).",
+  ],
   ocrLanguage: ["识别语言", "Recognition language"],
   ocrLanguageAuto: ["跟随系统默认", "System default"],
   ocrLanguageHint: [
@@ -69,6 +79,23 @@ const STRINGS = {
   ocrInstalled: ["已安装的语言", "Installed languages"],
   probeOcr: ["检测离线引擎", "Test offline engine"],
   probeOcrRunning: ["正在检测…", "Testing…"],
+  probeLocal: ["检测本地服务", "Test local service"],
+  ocrLocalUrl: ["本地服务地址", "Service address"],
+  ocrLocalUrlHint: [
+    "Umi-OCR 默认监听 http://127.0.0.1:1224（在其「全局设置 → 接口」里开启并查看端口）。",
+    "Umi-OCR listens on http://127.0.0.1:1224 by default (enable it in 全局设置 → 接口).",
+  ],
+  ocrLocalGet: ["下载 Umi-OCR", "Download Umi-OCR"],
+  ocrPictureCurrent: ["当前渠道：{name}", "Current service: {name}"],
+  ocrPictureUnavailable: [
+    "当前翻译渠道（{name}）不能读取图片。请到「翻译」页改选有道 / 百度 / 腾讯，或把识别引擎换成其它选项。",
+    "The selected translation service ({name}) cannot read a picture. Pick Youdao / Baidu / Tencent on the 翻译 page, or choose another recognition engine.",
+  ],
+  ocrPictureFallback: [
+    "该服务未开通图片翻译时，本次截图会自动回退到本机识别 + 文本翻译。",
+    "If the picture service is not enabled, the capture falls back to local OCR plus text translation.",
+  ],
+  ocrPictureGoTranslate: ["去设置翻译渠道", "Open translation settings"],
 
   /* endpoints */
   endpointBaseUrl: ["接口地址", "Base URL"],
@@ -163,9 +190,9 @@ const STRINGS = {
     "Region of the Azure key, e.g. eastasia. Leave empty for Tencent.",
   ],
   imageTranslate: ["一步翻译图片", "Translate the picture in one call"],
-  imageTranslateHint: [
-    "所选渠道直接读取整张图片并翻译（识别与翻译一次完成），不依赖本机 OCR。需要该渠道已开通「图片翻译」服务（有道 / 百度 / 腾讯都要在控制台单独申请）；若该服务不可用，本次会自动回退到「本机识别 + 文本翻译」。",
-    "The service reads the whole picture and translates it in one call, so no local OCR is needed. The provider's picture-translation service has to be enabled first (a separate application on Youdao / Baidu / Tencent). If it fails, the capture falls back to local OCR plus text translation automatically.",
+  translatePictureNote: [
+    "这个渠道支持「一步图片翻译」：可在「识别」页把引擎切换为它，识别与翻译一次完成。",
+    "This service can read the picture itself — pick it on the 识别 page to try it.",
   ],
   tierTitle: ["服务版本", "Service tier"],
   tierStandard: ["通用翻译", "Standard"],
@@ -177,8 +204,8 @@ const STRINGS = {
   ],
   badgeImageTranslate: ["图片翻译", "Picture translation"],
   ocrBypassedNote: [
-    "当前翻译渠道会直接读取图片（一步完成），因此「OCR 引擎」设置本次不会生效。",
-    "The selected translation service reads the picture itself, so the OCR engine setting is not used.",
+    "本次识别与翻译由翻译渠道一次完成，不使用本机 OCR 引擎。",
+    "Recognition and translation were done by the translation service in one call; the local OCR engine was not used.",
   ],
   targetLang: ["目标语言", "Target language"],
   targetLangHint: ["识别出的文字会被翻译成该语言。", "Recognised text is translated into this language."],

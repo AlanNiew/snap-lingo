@@ -336,7 +336,7 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
 
     // One-step picture translation: Youdao / Baidu / Tencent read the picture
     // themselves, so the local OCR engine is skipped for this capture.
-    if cfg.translate.uses_image_translate() {
+    if cfg.uses_picture_translate() {
         emit_stage(
             &app,
             Stage::Ocr,
@@ -504,6 +504,25 @@ async fn recognize(
         };
     }
 
+    // A local HTTP OCR service (Umi-OCR and compatible servers).
+    if cfg.ocr.provider == "local" {
+        let prepared = imageops::prepare_for_ocr(crop, &cfg.capture);
+        let png = imageops::to_png_bytes(&prepared)?;
+        return match tokio::time::timeout(OCR_TIMEOUT, providers.local_ocr(&cfg.ocr, &png)).await {
+            Ok(Ok(text)) => {
+                if text.trim().is_empty() {
+                    bail!("没有识别到文字。请尝试框选更清晰、更大的区域。");
+                }
+                Ok((text, None))
+            }
+            Ok(Err(err)) => Err(err),
+            Err(_) => bail!(
+                "本地 OCR 服务超过 {} 秒没有响应。请确认服务（例如 Umi-OCR）正在运行，并检查「本地服务地址」。",
+                OCR_TIMEOUT.as_secs()
+            ),
+        };
+    }
+
     // Offline OCR is CPU-bound and synchronous; keep it off the async pool.
     let capture_cfg = cfg.capture.clone();
     let language = cfg.ocr.language.clone();
@@ -532,16 +551,33 @@ async fn recognize(
 }
 
 fn provider_labels(cfg: &AppConfig) -> (String, String) {
-    if cfg.ocr.provider == "vision" {
-        (format!("vision:{}", short(&cfg.ocr.model)), cfg.ocr.model.clone())
-    } else {
-        let language = if cfg.ocr.language.trim().is_empty() {
-            "自动".to_string()
-        } else {
-            cfg.ocr.language.clone()
-        };
-        (format!("winocr:{language}"), format!("Windows OCR ({language})"))
+    match cfg.ocr.provider.as_str() {
+        "vision" => (
+            format!("vision:{}", short(&cfg.ocr.model)),
+            cfg.ocr.model.clone(),
+        ),
+        "local" => {
+            let host = host_of(&cfg.ocr.base_url);
+            (format!("local:{host}"), format!("本地 OCR ({host})"))
+        }
+        _ => {
+            let language = if cfg.ocr.language.trim().is_empty() {
+                "自动".to_string()
+            } else {
+                cfg.ocr.language.clone()
+            };
+            (format!("winocr:{language}"), format!("Windows OCR ({language})"))
+        }
     }
+}
+
+/// Bare host of a base URL, for labels.
+fn host_of(base_url: &str) -> String {
+    let trimmed = base_url
+        .trim()
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+    trimmed.split('/').next().unwrap_or(trimmed).to_string()
 }
 
 fn short(model: &str) -> String {

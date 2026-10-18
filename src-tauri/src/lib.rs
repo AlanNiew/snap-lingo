@@ -266,6 +266,7 @@ pub fn run() {
             commands::list_models,
             commands::test_ocr_connection,
             commands::test_translate_connection,
+            commands::test_local_ocr_connection,
             commands::ocr_languages,
             commands::ocr_probe,
             commands::reveal_config_dir,

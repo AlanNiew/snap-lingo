@@ -12,6 +12,7 @@ use crate::model::ConnectionCheck;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
+use image::RgbaImage;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
@@ -169,6 +170,67 @@ impl Providers {
             bail!("图片里没有识别到可以翻译的文字。");
         }
         Ok((source, translation))
+    }
+
+    /// Offline OCR through a local HTTP service (Umi-OCR and compatible
+    /// servers). The service runs on the user's own machine, so the picture
+    /// never leaves it.
+    pub async fn local_ocr(&self, cfg: &OcrConfig, png: &[u8]) -> Result<String> {
+        let url = local_ocr_url(cfg)?;
+        let body = json!({
+            "base64": base64::engine::general_purpose::STANDARD.encode(png),
+            "options": {
+                "data.format": "text",
+                "tbpu.parser": "multi_para",
+            }
+        });
+        let response = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| anyhow!("连接本地 OCR 服务失败：{}", classify_transport(&err)))?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            bail!(
+                "本地 OCR 服务返回 HTTP {}。请确认服务已经启动、地址端口正确。",
+                status.as_u16()
+            );
+        }
+        parse_local_ocr(&text)
+    }
+
+    /// Round-trip check for the local OCR service. A blank image is expected to
+    /// come back as "no text" (Umi-OCR answers code 101), which still proves the
+    /// service, the address and the image pipeline all work.
+    pub async fn local_ocr_probe(&self, cfg: &OcrConfig) -> Result<()> {
+        let blank = RgbaImage::from_pixel(72, 24, image::Rgba([255, 255, 255, 255]));
+        let png = crate::imageops::to_png_bytes(&blank)?;
+        self.local_ocr(cfg, &png).await.map(|_| ())
+    }
+
+    /// Same probe, in the shape the settings page shows.
+    pub async fn local_ocr_check(&self, cfg: &OcrConfig) -> ConnectionCheck {
+        let started = Instant::now();
+        let outcome = self.local_ocr_probe(cfg).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        match outcome {
+            Ok(()) => ConnectionCheck {
+                ok: true,
+                message: format!("本地 OCR 服务可用（{}）", host_of(&cfg.base_url)),
+                elapsed_ms,
+                sample: None,
+            },
+            Err(err) => ConnectionCheck {
+                ok: false,
+                message: format!("{err:#}"),
+                elapsed_ms,
+                sample: None,
+            },
+        }
     }
 
     async fn translate_chat(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
@@ -1254,6 +1316,61 @@ pub fn chunk_text(text: &str, limit: usize) -> Vec<String> {
 
 /* -------------------------------------------------------------- prompts */
 
+/// Endpoint of the local OCR service, validated.
+fn local_ocr_url(cfg: &OcrConfig) -> Result<String> {
+    let base = cfg.base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        bail!("还没有填写本地 OCR 服务地址（例如 http://127.0.0.1:1224）。");
+    }
+    if !base.starts_with("http://") && !base.starts_with("https://") {
+        bail!("本地 OCR 服务地址要以 http:// 或 https:// 开头，例如 http://127.0.0.1:1224。");
+    }
+    Ok(format!("{base}/api/ocr"))
+}
+
+/// Umi-OCR answers with `{"code": 100, "data": …}`: 100 = 识别成功,
+/// 101 = 没有文字, 其他为错误（原因在 data 里）。
+fn parse_local_ocr(body: &str) -> Result<String> {
+    let parsed: Value = serde_json::from_str(body).map_err(|err| {
+        anyhow!(
+            "本地 OCR 服务返回的不是预期的 JSON（{err}）：{}",
+            truncate(body, 160)
+        )
+    })?;
+    let code = parsed.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    let data = parsed.get("data").cloned().unwrap_or(Value::Null);
+    match code {
+        100 => {
+            let text = match data {
+                Value::String(text) => text,
+                Value::Array(items) => join_strings(&items, "text"),
+                other => other.to_string(),
+            };
+            Ok(unescape_ocr_newlines(text))
+        }
+        101 => Ok(String::new()),
+        _ => {
+            let reason = match data {
+                Value::String(text) => text,
+                other => other.to_string(),
+            };
+            bail!(
+                "本地 OCR 服务返回错误（code {code}）：{}",
+                truncate(&reason, 200)
+            )
+        }
+    }
+}
+
+/// Some services hand paragraph breaks back as a literal backslash-n. Rewrite
+/// only when there is no real newline that could be lost.
+fn unescape_ocr_newlines(text: String) -> String {
+    if !text.contains('\n') && text.contains("\\n") {
+        return text.replace("\\n", "\n");
+    }
+    text
+}
+
 fn ocr_system(custom: &str) -> String {
     if !custom.trim().is_empty() {
         return custom.to_string();
@@ -1701,6 +1818,40 @@ mod tests {
         let long = "x".repeat(50);
         let chunks = chunk_text(&long, 10);
         assert_eq!(chunks.iter().map(|c| c.chars().count()).sum::<usize>(), 50);
+    }
+
+    #[test]
+    fn local_ocr_replies_are_decoded() {
+        // Umi-OCR: 100 = 识别成功, 101 = 没有文字, 其它 = 出错（原因在 data）。
+        assert_eq!(
+            parse_local_ocr(r#"{"code":100,"data":"你好"}"#).unwrap(),
+            "你好"
+        );
+        assert_eq!(parse_local_ocr(r#"{"code":101,"data":"no text"}"#).unwrap(), "");
+        // A dict-style answer still yields text (joined per line).
+        assert_eq!(
+            parse_local_ocr(r#"{"code":100,"data":[{"text":"a"},{"text":"b"}]}"#).unwrap(),
+            "a\nb"
+        );
+        // Escaped newlines that some builds hand back are unescaped.
+        assert_eq!(
+            parse_local_ocr(r#"{"code":100,"data":"a\\nb"}"#).unwrap(),
+            "a\nb"
+        );
+        assert!(parse_local_ocr(r#"{"code":9,"data":"boom"}"#).is_err());
+        assert!(parse_local_ocr("<html>nope</html>").is_err());
+    }
+
+    #[test]
+    fn local_ocr_address_is_validated() {
+        let mut cfg = OcrConfig::default();
+        cfg.base_url = "127.0.0.1:1224".into();
+        assert!(local_ocr_url(&cfg).is_err());
+        cfg.base_url = "http://127.0.0.1:1224/".into();
+        assert_eq!(
+            local_ocr_url(&cfg).unwrap(),
+            "http://127.0.0.1:1224/api/ocr"
+        );
     }
 
     #[test]

@@ -99,6 +99,16 @@ pub async fn test_translate_connection(
     Ok(state.providers.test_translate(&config).await)
 }
 
+/// Round-trip check for a local HTTP OCR service (Umi-OCR and compatible
+/// servers). Nothing leaves the user's machine.
+#[tauri::command]
+pub async fn test_local_ocr_connection(
+    state: State<'_, AppState>,
+    config: crate::config::OcrConfig,
+) -> Result<ConnectionCheck, String> {
+    Ok(state.providers.local_ocr_check(&config).await)
+}
+
 /// One language pack the local Windows OCR engine can be told to use.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]

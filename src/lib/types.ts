@@ -1,6 +1,6 @@
 /** Shared types — must mirror the Rust structs in `src-tauri/src/config.rs` and `model.rs`. */
 
-export type OcrProvider = "vision" | "winocr";
+export type OcrProvider = "vision" | "winocr" | "picture" | "local";
 export type TranslateProvider =
   | "openai"
   | "deepl"
@@ -35,8 +35,6 @@ export interface TranslateProfile {
   /** Azure Translator region / Tencent region. */
   region: string;
   model: string;
-  /** Youdao / Baidu / Tencent can read the picture themselves (one-step OCR + translate). */
-  imageTranslate: boolean;
   /** Engine tier: "standard" | "llm" (Baidu, Youdao) or "llm" | "lite" (Tencent). */
   modelTier: string;
 }
@@ -48,7 +46,6 @@ export const EMPTY_PROFILE: TranslateProfile = {
   apiSecret: "",
   region: "",
   model: "",
-  imageTranslate: false,
   modelTier: "",
 };
 

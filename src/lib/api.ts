@@ -13,6 +13,7 @@ import type {
   AppConfig,
   ConnectionCheck,
   HistoryItem,
+  OcrConfig,
   ResultPayload,
   SelectionRect,
   SessionImage,
@@ -61,6 +62,8 @@ export const api = {
     invoke<ConnectionCheck>("test_translate_connection", { config }),
   ocrLanguages: () => invoke<OcrLanguage[]>("ocr_languages"),
   ocrProbe: (language: string) => invoke<ConnectionCheck>("ocr_probe", { language }),
+  testLocalOcrConnection: (config: OcrConfig) =>
+    invoke<ConnectionCheck>("test_local_ocr_connection", { config }),
 
   /* capture */
   startCapture: () => invoke<void>("start_capture"),

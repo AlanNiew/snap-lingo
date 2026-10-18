@@ -137,12 +137,12 @@ export function GeneralSection({
 /* ===================================================================== ocr */
 
 /** Opens a service's console / sign-up page in the default browser. */
-function ApplyLink({ url }: { url: string }) {
+function ApplyLink({ url, label }: { url: string; label?: string }) {
   const { t } = useT();
   if (!url) return null;
   return (
     <button className="btn btn-sm btn-ghost" title={url} onClick={() => void api.openExternal(url)}>
-      {t("applyUrlOpen")} ↗
+      {label ?? t("applyUrlOpen")} ↗
     </button>
   );
 }
@@ -292,18 +292,20 @@ function EndpointFields({
   );
 }
 
-/** True when the selected translator reads the picture itself, skipping OCR. */
-function usesPictureTranslate(config: AppConfig): boolean {
+/** The selected translator, when it is able to read the picture itself. */
+function pictureChannel(config: AppConfig): "youdao" | "baidu" | "tencent" | null {
   const provider = config.translate.provider;
-  if (provider !== "youdao" && provider !== "baidu" && provider !== "tencent") return false;
-  return config.translate.profiles?.[provider]?.imageTranslate ?? false;
+  return provider === "youdao" || provider === "baidu" || provider === "tencent" ? provider : null;
 }
 
 export function OcrSection({ config, patch, notify, languages }: Base & { languages: OcrLanguage[] }) {
   const { t } = useT();
   const [probe, setProbe] = useState<ConnectionCheck | null>(null);
   const [probing, setProbing] = useState(false);
-  const isVision = config.ocr.provider === "vision";
+  const provider = config.ocr.provider;
+  const meta = OCR_ENGINES.find((engine) => engine.id === provider) ?? OCR_ENGINES[0];
+  const picture = pictureChannel(config);
+  const pictureMeta = picture ? engineMeta(picture) : undefined;
 
   const setOcr = (patchOcr: Partial<AppConfig["ocr"]>, immediate = false) =>
     patch((cfg) => ({ ...cfg, ocr: { ...cfg.ocr, ...patchOcr } }), immediate);
@@ -311,7 +313,11 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
   const runProbe = async () => {
     setProbing(true);
     try {
-      setProbe(await api.ocrProbe(config.ocr.language));
+      setProbe(
+        provider === "local"
+          ? await api.testLocalOcrConnection(config.ocr)
+          : await api.ocrProbe(config.ocr.language),
+      );
     } catch (error) {
       setProbe({ ok: false, message: String(error), elapsedMs: 0, sample: null });
     } finally {
@@ -319,22 +325,24 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
     }
   };
 
+  const probeNote = probe ? (
+    <div className={`note ${probe.ok ? "note-ok" : "note-bad"}`} style={{ marginTop: 10 }}>
+      <span>
+        {probe.message}
+        {probe.ok ? ` · ${formatDuration(probe.elapsedMs)}` : ""}
+      </span>
+    </div>
+  ) : null;
+
   return (
     <>
       <h1 className="page-title">{t("tabOcr")}</h1>
       <p className="page-lead">{t("ocrEngineTitle")}</p>
 
-      {usesPictureTranslate(config) ? (
-        <Row title={t("badgeImageTranslate")} hint={t("ocrBypassedNote")} />
-      ) : null}
-
       <Card title={t("channel")}>
-        <Row
-          title={t("channel")}
-          hint={isVision ? t("ocrVisionDesc") : t("ocrWinDesc")}
-        >
+        <Row title={t("channel")} hint={t(meta.descKey)}>
           <Select
-            value={config.ocr.provider}
+            value={provider}
             onChange={(value) => setOcr({ provider: value as OcrProvider }, true)}
             options={OCR_ENGINES.map((engine) => ({
               value: engine.id,
@@ -344,7 +352,47 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
         </Row>
       </Card>
 
-      {isVision ? (
+      {provider === "local" ? (
+        <Card title={t("ocrLocal")} note={t("ocrLocalDesc")}>
+          <Field label={t("ocrLocalUrl")} hint={t("ocrLocalUrlHint")}>
+            <TextInput
+              mono
+              value={config.ocr.baseUrl}
+              onChange={(value) => setOcr({ baseUrl: value })}
+              placeholder="http://127.0.0.1:1224"
+            />
+          </Field>
+          <div className="row row-top" style={{ marginTop: 12 }}>
+            <div className="row-main">
+              <button className="btn" disabled={probing} onClick={() => void runProbe()}>
+                {probing ? <span className="spinner" /> : null}
+                {probing ? t("probeOcrRunning") : t("probeLocal")}
+              </button>
+            </div>
+            {meta.applyUrl ? <ApplyLink url={meta.applyUrl} label={t("ocrLocalGet")} /> : null}
+          </div>
+          {probeNote}
+        </Card>
+      ) : null}
+
+      {provider === "picture" ? (
+        <Card title={t("ocrPicture")} note={t("ocrPictureDesc")}>
+          {picture ? (
+            <Row
+              title={t("ocrPictureCurrent", { name: t(PROVIDER_KEYS[picture]) })}
+              hint={t("ocrPictureFallback")}
+            >
+              {pictureMeta ? <ApplyLink url={pictureMeta.applyUrl} /> : null}
+            </Row>
+          ) : (
+            <div className="note note-warn">
+              {t("ocrPictureUnavailable", { name: t(PROVIDER_KEYS[config.translate.provider]) })}
+            </div>
+          )}
+        </Card>
+      ) : null}
+
+      {provider === "vision" ? (
         <>
           <Card title={t("endpointBaseUrl")}>
             <EndpointFields
@@ -382,7 +430,7 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
             </div>
           </Card>
         </>
-      ) : (
+      ) : provider === "winocr" ? (
         <>
           <Card title={t("ocrLanguage")} note={t("ocrLanguageHint")}>
             <Row title={t("ocrLanguage")}>
@@ -400,20 +448,13 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
             </Row>
             <div className="row" style={{ marginTop: 10 }}>
               <div className="row-main">
-                <button className="btn" disabled={probing} onClick={runProbe}>
+                <button className="btn" disabled={probing} onClick={() => void runProbe()}>
                   {probing ? <span className="spinner" /> : null}
                   {probing ? t("probeOcrRunning") : t("probeOcr")}
                 </button>
               </div>
             </div>
-            {probe ? (
-              <div className={`note ${probe.ok ? "note-ok" : "note-bad"}`} style={{ marginTop: 10 }}>
-                <span>
-                  {probe.message}
-                  {probe.ok ? ` · ${formatDuration(probe.elapsedMs)}` : ""}
-                </span>
-              </div>
-            ) : null}
+            {probeNote}
           </Card>
 
           <Card title={t("ocrInstalled")}>
@@ -430,7 +471,7 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
             )}
           </Card>
         </>
-      )}
+      ) : null}
     </>
   );
 }
@@ -629,13 +670,10 @@ export function TranslateSection({ config, patch, notify }: Base) {
                 />
               </Field>
             ) : null}
-            {meta.imageTranslate ? (
-              <Row title={t("imageTranslate")} hint={t("imageTranslateHint")}>
-                <Switch
-                  checked={profile.imageTranslate}
-                  onChange={(next) => setProfile({ imageTranslate: next }, true)}
-                />
-              </Row>
+            {meta.picture ? (
+              <div className="note" style={{ marginBottom: 12 }}>
+                {t("translatePictureNote")}
+              </div>
             ) : null}
             {meta.tiers ? (
               <Field label={t("tierTitle")} hint={t("tierHint")}>

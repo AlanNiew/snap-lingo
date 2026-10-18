@@ -61,10 +61,18 @@ pub fn prepare_for_ocr(img: &RgbaImage, cfg: &CaptureConfig) -> RgbaImage {
 
 /// PNG data URL. Lossless, so thin glyphs survive; the OCR path prefers this.
 pub fn to_png_data_url(img: &RgbaImage) -> anyhow::Result<String> {
+    Ok(format!(
+        "data:image/png;base64,{}",
+        B64.encode(to_png_bytes(img)?)
+    ))
+}
+
+/// Raw PNG bytes — what local OCR services expect as base64 input.
+pub fn to_png_bytes(img: &RgbaImage) -> anyhow::Result<Vec<u8>> {
     let (w, h) = img.dimensions();
     let mut buf = Vec::with_capacity((w * h) as usize / 2 + 1024);
     PngEncoder::new(&mut buf).write_image(img.as_raw(), w, h, ExtendedColorType::Rgba8)?;
-    Ok(format!("data:image/png;base64,{}", B64.encode(&buf)))
+    Ok(buf)
 }
 
 /// JPEG data URL, for previews and for pathological PNG sizes.
