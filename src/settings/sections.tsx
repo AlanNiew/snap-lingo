@@ -2,8 +2,17 @@
 import { useState } from "react";
 
 import { api, type MonitorInfo, type OcrLanguage } from "../lib/api";
-import { PROVIDER_KEYS } from "../lib/labels";
-import type { AppConfig, ConnectionCheck, HistoryItem, ProviderPreset, TranslateProvider } from "../lib/types";
+import { OCR_ENGINES, PROVIDER_KEYS, TRANSLATE_ENGINES, engineMeta, type ProfileField } from "../lib/labels";
+import {
+  EMPTY_PROFILE,
+  type AppConfig,
+  type ConnectionCheck,
+  type HistoryItem,
+  type OcrProvider,
+  type ProviderPreset,
+  type TranslateProfile,
+  type TranslateProvider,
+} from "../lib/types";
 import { copyText, formatClock, formatDuration, truncate } from "../lib/util";
 import { useT } from "./context";
 import {
@@ -127,39 +136,53 @@ export function GeneralSection({
 
 /* ===================================================================== ocr */
 
-function PresetRow({
+/** Opens a service's console / sign-up page in the default browser. */
+function ApplyLink({ url }: { url: string }) {
+  const { t } = useT();
+  if (!url) return null;
+  return (
+    <button className="btn btn-sm btn-ghost" title={url} onClick={() => void api.openExternal(url)}>
+      {t("applyUrlOpen")} ↗
+    </button>
+  );
+}
+
+/**
+ * Dropdown of known services. Picking one fills the endpoint and model; the
+ * matching preset is also how we know which sign-up page to link to.
+ */
+function PresetPicker({
   presets,
   onPick,
+  currentUrl,
 }: {
   presets: ProviderPreset[];
   onPick: (preset: ProviderPreset) => void;
+  /** Endpoint currently in the form, used to reflect the matching preset. */
+  currentUrl: string;
 }) {
   const { t } = useT();
-  const [open, setOpen] = useState(false);
+  const matched = presets.find((preset) => preset.baseUrl === currentUrl);
 
   return (
-    <div>
-      <Row
-        title={t("presetTitle")}
-        hint={t("presetHint")}
-      >
-        <button className="btn btn-sm" onClick={() => setOpen((value) => !value)}>
-          {open ? t("hideKey") : t("showKey")}
-        </button>
+    <div className="stack">
+      <Row title={t("presetTitle")} hint={t("presetHint")}>
+        <Select
+          value={matched?.id ?? ""}
+          onChange={(value) => {
+            const preset = presets.find((item) => item.id === value);
+            if (preset) onPick(preset);
+          }}
+          options={[
+            { value: "", label: t("presetCustom") },
+            ...presets.map((preset) => ({ value: preset.id, label: preset.label })),
+          ]}
+        />
       </Row>
-      {open ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-          {presets.map((preset) => (
-            <button
-              key={preset.id}
-              className="btn btn-sm"
-              title={preset.hint}
-              onClick={() => onPick(preset)}
-            >
-              {preset.label}
-            </button>
-          ))}
-        </div>
+      {matched ? (
+        <Row title={t("applyUrl")} hint={matched.applyUrl}>
+          <ApplyLink url={matched.applyUrl} />
+        </Row>
       ) : null}
     </div>
   );
@@ -294,25 +317,20 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
       <h1 className="page-title">{t("tabOcr")}</h1>
       <p className="page-lead">{t("ocrEngineTitle")}</p>
 
-      <Card>
-        <div role="radiogroup">
-          <OptionCard
-            checked={!isVision}
-            onSelect={() => setOcr({ provider: "winocr" }, true)}
-            title={
-              <>
-                {t("ocrWin")} <span className="badge badge-accent">{t("ready")}</span>
-              </>
-            }
-            desc={t("ocrWinDesc")}
+      <Card title={t("channel")}>
+        <Row
+          title={t("channel")}
+          hint={isVision ? t("ocrVisionDesc") : t("ocrWinDesc")}
+        >
+          <Select
+            value={config.ocr.provider}
+            onChange={(value) => setOcr({ provider: value as OcrProvider }, true)}
+            options={OCR_ENGINES.map((engine) => ({
+              value: engine.id,
+              label: t(engine.titleKey),
+            }))}
           />
-          <OptionCard
-            checked={isVision}
-            onSelect={() => setOcr({ provider: "vision" }, true)}
-            title={t("ocrVision")}
-            desc={t("ocrVisionDesc")}
-          />
-        </div>
+        </Row>
       </Card>
 
       {isVision ? (
@@ -326,8 +344,9 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
               set={(next) => setOcr(next, false)}
             />
             <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-              <PresetRow
+              <PresetPicker
                 presets={PRESETS.filter((preset) => preset.visionModel)}
+                currentUrl={config.ocr.baseUrl}
                 onPick={(preset) => {
                   setOcr({ baseUrl: preset.baseUrl, model: preset.visionModel }, true);
                   notify(`${preset.label} · ${preset.visionModel}`, false);
@@ -449,45 +468,53 @@ function TranslateTest({ config }: { config: AppConfig }) {
 export function TranslateSection({ config, patch, notify }: Base) {
   const { t } = useT();
   const provider = config.translate.provider;
-  const isOpenai = provider === "openai";
-  const isDeepl = provider === "deepl";
-  const isMicrosoft = provider === "microsoft";
-  const needsSecret = provider === "youdao" || provider === "baidu" || provider === "tencent";
-  const needsRegion = isMicrosoft || provider === "tencent";
-  const secretLabel =
-    provider === "youdao" ? t("secretYoudao") : provider === "baidu" ? t("secretBaidu") : t("secretTencent");
+  const meta = engineMeta(provider);
+  const profile = config.translate.profiles?.[provider] ?? EMPTY_PROFILE;
+  const has = (field: ProfileField) => (meta?.fields ?? []).includes(field);
 
   const setTranslate = (next: Partial<AppConfig["translate"]>, immediate = false) =>
     patch((cfg) => ({ ...cfg, translate: { ...cfg.translate, ...next } }), immediate);
 
-  const engines: Array<{ id: TranslateProvider; title: string; desc: string }> = [
-    { id: "openai", title: t("translateOpenai"), desc: t("translateOpenaiDesc") },
-    { id: "deepl", title: t("translateDeepl"), desc: t("translateDeeplDesc") },
-    { id: "microsoft", title: t("translateMicrosoft"), desc: t("translateMicrosoftDesc") },
-    { id: "google", title: t("translateGoogle"), desc: t("translateGoogleDesc") },
-    { id: "youdao", title: t("translateYoudao"), desc: t("translateYoudaoDesc") },
-    { id: "baidu", title: t("translateBaidu"), desc: t("translateBaiduDesc") },
-    { id: "tencent", title: t("translateTencent"), desc: t("translateTencentDesc") },
-    { id: "none", title: t("translateNone"), desc: t("translateNoneDesc") },
-  ];
+  /**
+   * Writes into the selected engine's own profile. Keeping them apart is what
+   * stops a key typed for one service from showing up under another one.
+   */
+  const setProfile = (next: Partial<TranslateProfile>, immediate = false) =>
+    patch((cfg) => {
+      const current = cfg.translate.profiles?.[provider] ?? EMPTY_PROFILE;
+      return {
+        ...cfg,
+        translate: {
+          ...cfg.translate,
+          profiles: { ...cfg.translate.profiles, [provider]: { ...current, ...next } },
+        },
+      };
+    }, immediate);
+
+  const secretLabel =
+    provider === "youdao" ? t("secretYoudao") : provider === "baidu" ? t("secretBaidu") : t("secretTencent");
 
   return (
     <>
       <h1 className="page-title">{t("tabTranslate")}</h1>
       <p className="page-lead">{t("translateProvider")}</p>
 
-      <Card>
-        <div role="radiogroup">
-          {engines.map((engine) => (
-            <OptionCard
-              key={engine.id}
-              checked={provider === engine.id}
-              onSelect={() => setTranslate({ provider: engine.id }, true)}
-              title={engine.title}
-              desc={engine.desc}
-            />
-          ))}
-        </div>
+      <Card title={t("channel")} note={meta ? t(meta.descKey) : undefined}>
+        <Row title={t("channel")}>
+          <Select
+            value={provider}
+            onChange={(value) => setTranslate({ provider: value as TranslateProvider }, true)}
+            options={TRANSLATE_ENGINES.map((engine) => ({
+              value: engine.id,
+              label: t(engine.titleKey),
+            }))}
+          />
+        </Row>
+        {meta && meta.applyUrl ? (
+          <Row title={t("applyUrl")} hint={meta.applyUrl}>
+            <ApplyLink url={meta.applyUrl} />
+          </Row>
+        ) : null}
       </Card>
 
       {provider !== "none" ? (
@@ -502,22 +529,23 @@ export function TranslateSection({ config, patch, notify }: Base) {
         </Card>
       ) : null}
 
-      {isOpenai ? (
+      {provider === "openai" ? (
         <>
           <Card title={t("endpointBaseUrl")}>
             <EndpointFields
               kind="translate"
-              baseUrl={config.translate.baseUrl}
-              apiKey={config.translate.apiKey}
-              model={config.translate.model}
-              set={(next) => setTranslate(next, false)}
+              baseUrl={profile.baseUrl}
+              apiKey={profile.apiKey}
+              model={profile.model}
+              set={setProfile}
               onTest={() => api.testTranslateConnection(config.translate)}
             />
             <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-              <PresetRow
+              <PresetPicker
                 presets={PRESETS.filter((preset) => preset.textModel)}
+                currentUrl={profile.baseUrl}
                 onPick={(preset) => {
-                  setTranslate({ baseUrl: preset.baseUrl, model: preset.textModel }, true);
+                  setProfile({ baseUrl: preset.baseUrl, model: preset.textModel }, true);
                   notify(`${preset.label} · ${preset.textModel}`, false);
                 }}
               />
@@ -537,63 +565,56 @@ export function TranslateSection({ config, patch, notify }: Base) {
         </>
       ) : null}
 
-      {isDeepl ? (
-        <Card title="DeepL" note={t("deeplKeyHint")}>
+      {meta && provider !== "openai" && provider !== "none" ? (
+        <Card
+          title={t(meta.titleKey)}
+          note={has("region") ? t("regionHint") : has("apiSecret") ? t("secretHint") : undefined}
+        >
           <div className="stack">
-            <Field label={t("endpointKey")} hint={t("deeplKeyHint")}>
+            <Field
+              label={t("endpointKey")}
+              hint={provider === "deepl" ? t("deeplKeyHint") : t("endpointKeyHint")}
+            >
               <SecretInput
-                value={config.translate.apiKey}
-                onChange={(value) => setTranslate({ apiKey: value })}
-                placeholder="xxxxxxxx-xxxx-…:fx"
+                value={profile.apiKey}
+                onChange={(value) => setProfile({ apiKey: value })}
+                placeholder={meta.keyPlaceholder}
                 showLabel={t("showKey")}
                 hideLabel={t("hideKey")}
               />
             </Field>
-            <Field label={t("deeplPlan")}>
-              <Select
-                value={config.translate.deeplPlan}
-                onChange={(value) => setTranslate({ deeplPlan: value as AppConfig["translate"]["deeplPlan"] }, true)}
-                options={[
-                  { value: "free", label: t("deeplFree") },
-                  { value: "pro", label: t("deeplPro") },
-                ]}
-              />
-            </Field>
-            <TranslateTest config={config} />
-          </div>
-        </Card>
-      ) : null}
-
-      {!isOpenai && !isDeepl && provider !== "none" ? (
-        <Card title={t("endpointKey")} note={t("secretHint")}>
-          <div className="stack">
-            <Field label={t("endpointKey")} hint={t("endpointKeyHint")}>
-              <SecretInput
-                value={config.translate.apiKey}
-                onChange={(value) => setTranslate({ apiKey: value })}
-                placeholder="…"
-                showLabel={t("showKey")}
-                hideLabel={t("hideKey")}
-              />
-            </Field>
-            {needsSecret ? (
+            {has("apiSecret") ? (
               <Field label={secretLabel}>
                 <SecretInput
-                  value={config.translate.apiSecret}
-                  onChange={(value) => setTranslate({ apiSecret: value })}
+                  value={profile.apiSecret}
+                  onChange={(value) => setProfile({ apiSecret: value })}
                   placeholder="…"
                   showLabel={t("showKey")}
                   hideLabel={t("hideKey")}
                 />
               </Field>
             ) : null}
-            {needsRegion ? (
+            {has("region") ? (
               <Field label={t("region")} hint={t("regionHint")}>
                 <TextInput
                   mono
-                  value={config.translate.region}
-                  onChange={(value) => setTranslate({ region: value })}
-                  placeholder={isMicrosoft ? "eastasia" : "ap-guangzhou"}
+                  value={profile.region}
+                  onChange={(value) => setProfile({ region: value })}
+                  placeholder={provider === "microsoft" ? "eastasia" : "ap-guangzhou"}
+                />
+              </Field>
+            ) : null}
+            {provider === "deepl" ? (
+              <Field label={t("deeplPlan")}>
+                <Select
+                  value={config.translate.deeplPlan}
+                  onChange={(value) =>
+                    setTranslate({ deeplPlan: value as AppConfig["translate"]["deeplPlan"] }, true)
+                  }
+                  options={[
+                    { value: "free", label: t("deeplFree") },
+                    { value: "pro", label: t("deeplPro") },
+                  ]}
                 />
               </Field>
             ) : null}

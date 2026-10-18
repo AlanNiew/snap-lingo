@@ -5,10 +5,15 @@
 //! hand-edited partial file is still accepted.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const APP_DIR: &str = "SnapLingo";
 pub const DEFAULT_SHORTCUT: &str = "Ctrl+Alt+Z";
+/// Default OpenAI-compatible endpoint, used by both the vision OCR engine and
+/// the `openai` translation engine when the user has not typed one.
+pub const DEFAULT_OPENAI_BASE_URL: &str = "https://integrate.api.nvidia.com/v1";
+pub const DEFAULT_TEXT_MODEL: &str = "nvidia/nemotron-3-ultra-550b-a55b";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -30,7 +35,7 @@ impl Default for OcrConfig {
     fn default() -> Self {
         Self {
             provider: "winocr".into(),
-            base_url: "https://integrate.api.nvidia.com/v1".into(),
+            base_url: DEFAULT_OPENAI_BASE_URL.into(),
             api_key: String::new(),
             model: String::new(),
             language: String::new(),
@@ -40,11 +45,12 @@ impl Default for OcrConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Credentials and endpoint for one translation engine. Every engine keeps its
+/// own copy, which is what stops one service's API key from turning up in
+/// another service's form after switching engines.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-pub struct TranslateConfig {
-    /// `openai` | `deepl` | `microsoft` | `google` | `youdao` | `baidu` | `tencent` | `none`
-    pub provider: String,
+pub struct TranslateProfile {
     pub base_url: String,
     pub api_key: String,
     /// Secondary credential: Youdao app secret, Baidu app key, Tencent secretKey.
@@ -52,23 +58,82 @@ pub struct TranslateConfig {
     /// Azure Translator region, Tencent region.
     pub region: String,
     pub model: String,
+}
+
+impl TranslateProfile {
+    /// True when the engine has nothing configured at all.
+    pub fn is_blank(&self) -> bool {
+        self.base_url.trim().is_empty()
+            && self.api_key.trim().is_empty()
+            && self.api_secret.trim().is_empty()
+            && self.region.trim().is_empty()
+            && self.model.trim().is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TranslateConfig {
+    /// `openai` | `deepl` | `microsoft` | `google` | `youdao` | `baidu` | `tencent` | `none`
+    pub provider: String,
+    /// One entry per engine, keyed by provider id.
+    pub profiles: BTreeMap<String, TranslateProfile>,
     pub target_lang: String,
     pub deepl_plan: String,
     pub prompt: String,
+    /// Credentials from configs written before profiles existed. Read once to
+    /// migrate them into `profiles`, never written back out.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub base_url: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub api_key: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub api_secret: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub region: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model: String,
+}
+
+impl TranslateConfig {
+    /// Settings of one engine; a missing entry yields blanks.
+    pub fn profile(&self, id: &str) -> TranslateProfile {
+        self.profiles.get(id).cloned().unwrap_or_default()
+    }
+
+    /// Mutable settings of one engine, created on first use.
+    pub fn profile_mut(&mut self, id: &str) -> &mut TranslateProfile {
+        self.profiles.entry(id.to_string()).or_default()
+    }
+
+    /// Settings of the engine that is currently selected.
+    pub fn active(&self) -> TranslateProfile {
+        self.profile(&self.provider)
+    }
 }
 
 impl Default for TranslateConfig {
     fn default() -> Self {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "openai".to_string(),
+            TranslateProfile {
+                base_url: DEFAULT_OPENAI_BASE_URL.into(),
+                model: DEFAULT_TEXT_MODEL.into(),
+                ..Default::default()
+            },
+        );
         Self {
             provider: "openai".into(),
-            base_url: "https://integrate.api.nvidia.com/v1".into(),
-            api_key: String::new(),
-            api_secret: String::new(),
-            region: String::new(),
-            model: "nvidia/nemotron-3-ultra-550b-a55b".into(),
+            profiles,
             target_lang: "zh-CN".into(),
             deepl_plan: "free".into(),
             prompt: String::new(),
+            base_url: String::new(),
+            api_key: String::new(),
+            api_secret: String::new(),
+            region: String::new(),
+            model: String::new(),
         }
     }
 }
@@ -184,15 +249,55 @@ impl AppConfig {
         }
         self.history.limit = self.history.limit.clamp(0, 1000);
         if self.ocr.base_url.trim().is_empty() {
-            self.ocr.base_url = "https://integrate.api.nvidia.com/v1".into();
-        }
-        // Only the OpenAI-compatible path has a sensible default endpoint: every
-        // other engine knows its own and treats an empty value as "use it".
-        if self.translate.provider == "openai" && self.translate.base_url.trim().is_empty() {
-            self.translate.base_url = "https://integrate.api.nvidia.com/v1".into();
+            self.ocr.base_url = DEFAULT_OPENAI_BASE_URL.into();
         }
         self.ocr.base_url = self.ocr.base_url.trim_end_matches('/').to_string();
-        self.translate.base_url = self.translate.base_url.trim_end_matches('/').to_string();
+        // Configs written before per-engine profiles carried a single flat set of
+        // credentials. Fold them into the profile of the engine that was selected
+        // so nothing the user already typed is lost.
+        let legacy = TranslateProfile {
+            base_url: std::mem::take(&mut self.translate.base_url),
+            api_key: std::mem::take(&mut self.translate.api_key),
+            api_secret: std::mem::take(&mut self.translate.api_secret),
+            region: std::mem::take(&mut self.translate.region),
+            model: std::mem::take(&mut self.translate.model),
+        };
+        if !legacy.is_blank() {
+            let id = self.translate.provider.clone();
+            let p = self.translate.profile_mut(&id);
+            if p.base_url.trim().is_empty() {
+                p.base_url = legacy.base_url;
+            }
+            if p.api_key.trim().is_empty() {
+                p.api_key = legacy.api_key;
+            }
+            if p.api_secret.trim().is_empty() {
+                p.api_secret = legacy.api_secret;
+            }
+            if p.region.trim().is_empty() {
+                p.region = legacy.region;
+            }
+            if p.model.trim().is_empty() {
+                p.model = legacy.model;
+            }
+        }
+        // Only the OpenAI-compatible engine has a sensible default endpoint: every
+        // other engine knows its own and reads an empty value as "use the built-in
+        // one". The default model only makes sense for the OpenAI-compatible path.
+        let openai = self.translate.profile_mut("openai");
+        if openai.base_url.trim().is_empty() {
+            openai.base_url = DEFAULT_OPENAI_BASE_URL.into();
+        }
+        if openai.model.trim().is_empty() {
+            openai.model = DEFAULT_TEXT_MODEL.into();
+        }
+        for p in self.translate.profiles.values_mut() {
+            p.base_url = p.base_url.trim().trim_end_matches('/').to_string();
+            p.api_key = p.api_key.trim().to_string();
+            p.api_secret = p.api_secret.trim().to_string();
+            p.region = p.region.trim().to_string();
+            p.model = p.model.trim().to_string();
+        }
         if self.translate.target_lang.trim().is_empty() {
             self.translate.target_lang = "zh-CN".into();
         }
@@ -210,14 +315,15 @@ impl AppConfig {
     /// setup. Used for onboarding: the settings window opens when this is false.
     pub fn is_ready(&self) -> bool {
         let tr = &self.translate;
+        let p = tr.active();
         let tr_ok = match tr.provider.as_str() {
             "none" => true,
-            "deepl" | "microsoft" | "google" => !tr.api_key.trim().is_empty(),
+            "deepl" | "microsoft" | "google" => !p.api_key.trim().is_empty(),
             // These three sign the request with a second credential.
             "youdao" | "baidu" | "tencent" => {
-                !tr.api_key.trim().is_empty() && !tr.api_secret.trim().is_empty()
+                !p.api_key.trim().is_empty() && !p.api_secret.trim().is_empty()
             }
-            _ => !tr.api_key.trim().is_empty() && !tr.model.trim().is_empty(),
+            _ => !p.api_key.trim().is_empty() && !p.model.trim().is_empty(),
         };
         self.is_ocr_ready() && tr_ok
     }

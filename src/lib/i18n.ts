@@ -96,6 +96,10 @@ const STRINGS = {
     "一键填入常用服务商的接口地址与模型，密钥仍需自行填写。",
     "Fills the endpoint and model for a known provider. You still supply the key.",
   ],
+  applyUrl: ["官方申请地址", "Get credentials"],
+  applyUrlOpen: ["打开申请页面", "Open sign-up page"],
+  presetCustom: ["自定义 / 已手动填写", "Custom / filled in"],
+  channel: ["渠道", "Service"],
 
   /* translate */
   translateProvider: ["翻译服务", "Translation service"],

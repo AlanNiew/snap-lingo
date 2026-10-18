@@ -96,6 +96,17 @@ impl Providers {
     /* ------------------------------------------------------- translate */
 
     pub async fn translate(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
+        // The engines below read the flat credential fields. Fold the selected
+        // engine's own profile into them so no engine can ever pick up another
+        // engine's key, region or endpoint.
+        let profile = cfg.active();
+        let mut scoped = cfg.clone();
+        scoped.base_url = profile.base_url;
+        scoped.api_key = profile.api_key;
+        scoped.api_secret = profile.api_secret;
+        scoped.region = profile.region;
+        scoped.model = profile.model;
+        let cfg = &scoped;
         match cfg.provider.as_str() {
             "none" => Ok(String::new()),
             "deepl" => self.deepl(cfg, text).await,

@@ -2,7 +2,8 @@
  * One-click endpoints for the services people actually use.
  *
  * Keys are never prefilled: half the presets would have to be lies, and a
- * stored key that silently does not work is worse than an empty box.
+ * stored key that silently does not work is worse than an empty box. The
+ * `applyUrl` link is where the key is issued.
  */
 import type { ProviderPreset } from "../lib/types";
 
@@ -15,6 +16,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://integrate.api.nvidia.com/v1",
     visionModel: "meta/llama-3.2-11b-vision-instruct",
     textModel: "nvidia/nemotron-3-ultra-550b-a55b",
+    applyUrl: "https://build.nvidia.com/",
   },
   {
     id: "zhipu",
@@ -24,6 +26,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     visionModel: "glm-4v-flash",
     textModel: "glm-4-flash",
+    applyUrl: "https://open.bigmodel.cn/",
   },
   {
     id: "deepseek",
@@ -33,6 +36,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.deepseek.com/v1",
     visionModel: "",
     textModel: "deepseek-chat",
+    applyUrl: "https://platform.deepseek.com/api_keys",
   },
   {
     id: "dashscope",
@@ -42,6 +46,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     visionModel: "qwen-vl-max",
     textModel: "qwen-plus",
+    applyUrl: "https://bailian.console.aliyun.com/",
   },
   {
     id: "openai",
@@ -51,6 +56,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.openai.com/v1",
     visionModel: "gpt-4o-mini",
     textModel: "gpt-4o-mini",
+    applyUrl: "https://platform.openai.com/api-keys",
   },
   {
     id: "siliconflow",
@@ -60,6 +66,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.siliconflow.cn/v1",
     visionModel: "Qwen/Qwen2.5-VL-72B-Instruct",
     textModel: "Qwen/Qwen2.5-7B-Instruct",
+    applyUrl: "https://cloud.siliconflow.cn/account/ak",
   },
   {
     id: "moonshot",
@@ -69,6 +76,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.moonshot.cn/v1",
     visionModel: "moonshot-v1-8k-vision-preview",
     textModel: "moonshot-v1-8k",
+    applyUrl: "https://platform.moonshot.cn/console/api-keys",
   },
   {
     id: "openrouter",
@@ -78,6 +86,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://openrouter.ai/api/v1",
     visionModel: "openai/gpt-4o-mini",
     textModel: "openai/gpt-4o-mini",
+    applyUrl: "https://openrouter.ai/keys",
   },
   {
     id: "ollama",
@@ -87,6 +96,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "http://localhost:11434/v1",
     visionModel: "qwen2.5vl:7b",
     textModel: "qwen2.5:7b",
+    applyUrl: "https://ollama.com/download",
   },
   {
     id: "lmstudio",
@@ -96,6 +106,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "http://localhost:1234/v1",
     visionModel: "qwen2-vl-7b-instruct",
     textModel: "qwen2.5-7b-instruct",
+    applyUrl: "https://lmstudio.ai/",
   },
   {
     id: "opencode",
@@ -105,6 +116,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://opencode.ai/zen/v1",
     visionModel: "",
     textModel: "deepseek-v4-flash",
+    applyUrl: "https://opencode.ai/auth",
   },
   {
     id: "qianfan",
@@ -114,6 +126,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://qianfan.baidubce.com/v2",
     visionModel: "ernie-4.5-turbo-vl",
     textModel: "ernie-4.5-turbo-128k",
+    applyUrl: "https://console.bce.baidu.com/qianfan/",
   },
   {
     id: "hunyuan",
@@ -123,6 +136,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
     visionModel: "hunyuan-vision",
     textModel: "hunyuan-turbos-latest",
+    applyUrl: "https://console.cloud.tencent.com/hunyuan/api-key",
   },
   {
     id: "spark",
@@ -132,6 +146,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://spark-api-open.xf-yun.com/v1",
     visionModel: "image-4.0",
     textModel: "4.0Ultra",
+    applyUrl: "https://console.xfyun.cn/services/cbm",
   },
   {
     id: "gemini",
@@ -141,6 +156,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     visionModel: "gemini-2.5-flash",
     textModel: "gemini-2.5-flash",
+    applyUrl: "https://aistudio.google.com/apikey",
   },
   {
     id: "groq",
@@ -150,6 +166,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.groq.com/openai/v1",
     visionModel: "",
     textModel: "llama-3.3-70b-versatile",
+    applyUrl: "https://console.groq.com/keys",
   },
   {
     id: "mistral",
@@ -159,6 +176,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.mistral.ai/v1",
     visionModel: "pixtral-large-latest",
     textModel: "mistral-large-latest",
+    applyUrl: "https://console.mistral.ai/api-keys",
   },
   {
     id: "xai",
@@ -168,6 +186,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.x.ai/v1",
     visionModel: "",
     textModel: "grok-4",
+    applyUrl: "https://console.x.ai/",
   },
   {
     id: "together",
@@ -177,6 +196,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.together.xyz/v1",
     visionModel: "Qwen/Qwen2.5-VL-72B-Instruct",
     textModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    applyUrl: "https://api.together.ai/settings/api-keys",
   },
   {
     id: "deepinfra",
@@ -186,6 +206,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.deepinfra.com/v1/openai",
     visionModel: "Qwen/Qwen2.5-VL-72B-Instruct",
     textModel: "meta-llama/Llama-3.3-70B-Instruct",
+    applyUrl: "https://deepinfra.com/dash/api_keys",
   },
   {
     id: "cerebras",
@@ -195,6 +216,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.cerebras.ai/v1",
     visionModel: "",
     textModel: "llama3.3-70b",
+    applyUrl: "https://cloud.cerebras.ai/",
   },
   {
     id: "fireworks",
@@ -204,6 +226,7 @@ export const PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.fireworks.ai/inference/v1",
     visionModel: "",
     textModel: "accounts/fireworks/models/llama-v3p3-70b-instruct",
+    applyUrl: "https://fireworks.ai/account/api-keys",
   },
 ];
 

@@ -63,9 +63,10 @@ npm run tauri build
 
 1. 启动后程序只存在于**系统托盘**（没有主窗口）。
 2. 右键托盘图标 → **设置**，至少配置一项：
-   - 只想离线使用：`OCR = Windows 内置 OCR`，`翻译 = OpenAI 兼容`（填入你的接口地址、Key、模型）。
+   - **OCR 引擎**在「OCR」页用下拉列表选：`Windows 内置 OCR`（离线免费，无需 Key）或 `视觉大模型`（选它时才需要接口地址 / Key / 模型，预设也是下拉列表，并给出官方申请地址）。
+   - **翻译渠道**在「翻译」页用下拉列表选：OpenAI 兼容、DeepL、微软、谷歌、有道、百度、腾讯，或「仅识别不翻译」。选中一个渠道后只显示它需要的输入框，并给出官方申请地址；每个渠道的 Key 各存各的，互不串用。
+   - 只想离线使用：`OCR = Windows 内置 OCR`，`翻译 = 仅识别不翻译`。
    - 想一条请求搞定：`OCR = 视觉大模型`，填好 OpenAI 兼容的地址/Key/模型；若开启 **一次调用**，则同一次请求同时返回原文与译文。
-   - 完全离线：`翻译 = 关闭`，只做 OCR。
 3. 用 `Ctrl + Alt + Z`、或托盘菜单「截图翻译」、或托盘图标左键单击触发截图。
 4. 拖拽框选文字区域，松开鼠标开始识别；`Esc` / 右键取消，再按一次快捷键也能取消。
 5. 结果窗口出现后可：用底部「原文 / 译文 / 对照」切换要看的版本、复制、重新翻译、`Esc` 关闭。识别或翻译失败时，窗口会显示原因和「重试」按钮（重试会复用上一次的截图，不必重新框选）。
@@ -91,11 +92,19 @@ npm run tauri build
   },
   "translate": {
     "provider": "openai",            // openai | deepl | microsoft | google | youdao | baidu | tencent | none
-    "baseUrl": "https://integrate.api.nvidia.com/v1",
-    "apiKey": "",                    // 谷歌=API Key；有道=应用 ID；百度=AppID；腾讯=SecretId
-    "apiSecret": "",                 // 有道=应用密钥；百度=密钥；腾讯=SecretKey
-    "region": "",                    // 微软必填（如 eastasia）；腾讯可选（如 ap-guangzhou）
-    "model": "nvidia/nemotron-3-ultra-550b-a55b",
+    "profiles": {                    // 每个渠道各存各的凭证，互不串用
+      "openai": {
+        "baseUrl": "https://integrate.api.nvidia.com/v1",
+        "apiKey": "",
+        "apiSecret": "",
+        "region": "",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b"
+      },
+      "deepl":   { "baseUrl": "", "apiKey": "", "apiSecret": "", "region": "", "model": "" },
+      "youdao":  { "apiKey": "", "apiSecret": "" },   // 应用 ID + 应用密钥
+      "baidu":   { "apiKey": "", "apiSecret": "" },   // AppID + 密钥
+      "tencent": { "apiKey": "", "apiSecret": "", "region": "" }  // SecretId + SecretKey + 区域（可选）
+    },
     "targetLang": "zh-CN",
     "deeplPlan": "free",             // free | pro
     "prompt": ""
@@ -121,16 +130,18 @@ npm run tauri build
 
 内置预设服务商（设置页可一键填充）：NVIDIA NIM、智谱 GLM、DeepSeek、阿里云百炼、OpenAI、硅基流动、Kimi、OpenRouter、Ollama、LM Studio、OpenCode Zen、百度千帆、腾讯混元、讯飞星火、Google Gemini、Groq、Mistral、xAI Grok、Together AI、DeepInfra、Cerebras、Fireworks —— 全部走 OpenAI 兼容协议。
 
-除 OpenAI 兼容协议外，还可以直接使用四家云翻译 API 和 DeepL：
+除 OpenAI 兼容协议外，还可以直接使用六家云翻译 API。设置页用**下拉列表**选渠道，选中后只显示该渠道需要的输入框，并给出官方申请地址：
 
-| 服务商 | 需要填写 | 说明 |
-| --- | --- | --- |
-| DeepL | API Key、账号类型 | Free 密钥以 `:fx` 结尾 |
-| 微软翻译（Azure） | API Key、区域 | 区域例如 `eastasia`；每月有免费额度 |
-| 谷歌翻译 | API Key | Google Cloud Translation v2，密钥作为 URL 参数发送，建议在控制台限制该密钥 |
-| 有道智云 | 应用 ID、应用密钥 | 文本翻译 v3，签名走 `sha256` |
-| 百度翻译 | AppID、密钥 | 通用文本翻译，签名走 `md5` |
-| 腾讯云翻译 | SecretId、SecretKey、区域（可选） | 机器翻译 TMT，签名走 TC3-HMAC-SHA256，每月 500 万字符免费 |
+| 服务商 | 需要填写 | 申请地址 | 说明 |
+| --- | --- | --- | --- |
+| DeepL | API Key、账号类型 | deepl.com（账号 → API 密钥） | Free 密钥以 `:fx` 结尾 |
+| 微软翻译（Azure） | API Key、区域 | portal.azure.com（创建「文本翻译」资源） | 区域例如 `eastasia`；每月有免费额度 |
+| 谷歌翻译 | API Key | console.cloud.google.com（API 凭证） | Google Cloud Translation v2，密钥作为 URL 参数发送，建议在控制台限制该密钥 |
+| 有道智云 | 应用 ID、应用密钥 | ai.youdao.com（控制台 → 应用总览） | 文本翻译 v3，签名走 `sha256` |
+| 百度翻译 | AppID、密钥 | fanyi-api.baidu.com | 通用文本翻译，签名走 `md5` |
+| 腾讯云翻译 | SecretId、SecretKey、区域（可选） | console.cloud.tencent.com（访问管理 → API 密钥） | 机器翻译 TMT，签名走 TC3-HMAC-SHA256，每月 500 万字符免费 |
+
+每个渠道的 Key / 区域**各存各的**（存在各自 `profiles` 条目里）：从 OpenRouter 换到微软翻译再换回来，两边的密钥都还在，也绝不会把 A 家的 Key 显示到 B 家的输入框里。旧版配置里扁平的 `translate.apiKey` 等字段会在首次启动时自动迁入对应渠道，不会丢失。
 
 > 云翻译引擎的目标语言支持范围由各家自己决定（例如有道/百度/腾讯对部分小语种有限制）。如果返回「不支持的语言」，换成该服务商支持的语言，或改用 OpenAI 兼容接口的 LLM 翻译即可。
 

@@ -25,8 +25,9 @@ export interface OcrConfig {
   prompt: string;
 }
 
-export interface TranslateConfig {
-  provider: TranslateProvider;
+/** Credentials and endpoint for one engine. Each engine keeps its own copy so a
+ *  key typed for one service never shows up in another service's form. */
+export interface TranslateProfile {
   baseUrl: string;
   apiKey: string;
   /** Second credential: Youdao app secret, Baidu key, Tencent secretKey. */
@@ -34,6 +35,21 @@ export interface TranslateConfig {
   /** Azure Translator region / Tencent region. */
   region: string;
   model: string;
+}
+
+/** A blank profile, used while the user is still filling one in. */
+export const EMPTY_PROFILE: TranslateProfile = {
+  baseUrl: "",
+  apiKey: "",
+  apiSecret: "",
+  region: "",
+  model: "",
+};
+
+export interface TranslateConfig {
+  provider: TranslateProvider;
+  /** One entry per engine, keyed by provider id. */
+  profiles: Record<string, TranslateProfile>;
   /** BCP-47-ish target language tag, e.g. "zh-CN", "en", "ja". */
   targetLang: string;
   deeplPlan: DeepLPlan;
@@ -144,4 +160,6 @@ export interface ProviderPreset {
   baseUrl: string;
   visionModel: string;
   textModel: string;
+  /** Official page where an API key for this service is issued. */
+  applyUrl: string;
 }
