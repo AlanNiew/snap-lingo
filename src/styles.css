@@ -1081,9 +1081,10 @@ body.result-body {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  /* Bleed to the window edges: the body is padded, the footer is not. */
+  /* Bleed to the window edges: the body is padded, the footer is not. The
+     bottom gets a little more room so the buttons never hug the window edge. */
   margin: 14px -14px 0;
-  padding: 9px 12px 10px;
+  padding: 11px 12px 16px;
   border-top: 1px solid var(--border);
   background: var(--surface-2);
 }
