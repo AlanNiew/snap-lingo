@@ -994,10 +994,12 @@ body.result-body {
 /* The captured picture sits above the text as a full-width strip, capped so a
    tall crop can never crowd out the translation. Click to read it full size. */
 .result-shot {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0 0 14px;
-  width: 100%;
-  max-height: 190px;
+  padding: 6px;
+  max-height: 340px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -1005,12 +1007,18 @@ body.result-body {
   cursor: zoom-in;
 }
 
+/* Sized by the picture itself, never by the box: `max-width/max-height` with
+   `width/height: auto` can only ever shrink the image, so a big capture is
+   always shown whole (a fixed box + object-fit can end up cropping it). */
 .result-shot img {
   display: block;
-  width: 100%;
-  max-height: 188px;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  /* Tall enough to read a full-screen capture, short enough to leave room for
+     the text. Click the picture for a 1:1 view. */
+  max-height: 328px;
   object-fit: contain;
-  object-position: left top;
 }
 
 /* Click the picture to read it at full size (crop out the small window). */
@@ -1019,6 +1027,8 @@ body.result-body {
   inset: 0;
   z-index: 40;
   width: auto;
+  max-height: none;
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: rgba(12, 14, 18, 0.92);
