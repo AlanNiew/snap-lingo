@@ -1006,6 +1006,64 @@ body.result-body {
   flex: 1;
 }
 
+/* Compact 原文 / 译文 / 对照 switch that lives in the footer. */
+.result-view {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.result-view button {
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 3px 11px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.result-view button:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.result-view button[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.result-view button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.result-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.result-pane-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.result-divider {
+  height: 1px;
+  margin: 12px 0;
+  background: var(--border);
+}
+
 .result-error {
   display: flex;
   gap: 9px;

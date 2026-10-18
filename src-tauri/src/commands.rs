@@ -77,14 +77,26 @@ pub async fn list_models(
 }
 
 #[tauri::command]
-pub async fn test_connection(
+pub async fn test_ocr_connection(
     state: State<'_, AppState>,
-    kind: String,
     base_url: String,
     api_key: String,
     model: String,
 ) -> Result<ConnectionCheck, String> {
-    Ok(state.providers.test(&base_url, &api_key, &model, &kind).await)
+    Ok(state
+        .providers
+        .test(&base_url, &api_key, &model, "ocr")
+        .await)
+}
+
+/// Exercise the translation engine that is actually configured — a chat model,
+/// DeepL, or one of the cloud translators (which have their own credentials).
+#[tauri::command]
+pub async fn test_translate_connection(
+    state: State<'_, AppState>,
+    config: crate::config::TranslateConfig,
+) -> Result<ConnectionCheck, String> {
+    Ok(state.providers.test_translate(&config).await)
 }
 
 /// One language pack the local Windows OCR engine can be told to use.
@@ -109,9 +121,18 @@ pub fn ocr_languages() -> Vec<OcrLanguage> {
 /// Exercise the offline engine without a screenshot, so the user can tell an
 /// unconfigured machine from a broken one.
 #[tauri::command]
-pub fn ocr_probe(language: String) -> ConnectionCheck {
+pub async fn ocr_probe(language: String) -> ConnectionCheck {
     let started = std::time::Instant::now();
-    let result = crate::ocr_win::probe(&language);
+    // The WinRT OCR call blocks its thread while it runs; keep it off the main
+    // thread so probing can never freeze the settings window.
+    let probe_language = language.clone();
+    let result =
+        match tauri::async_runtime::spawn_blocking(move || crate::ocr_win::probe(&probe_language))
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => Err(anyhow::anyhow!("OCR 检测任务未能完成：{err}")),
+        };
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let mut check = match result {
         Ok(()) => ConnectionCheck {

@@ -18,8 +18,8 @@ SnapLingo 是一个 Windows 桌面小工具，常驻托盘，**启动快、内�
 | 出错处理 | 任何失败都会**弹出结果窗口并同时发一条系统通知**说明原因，结果窗口内置「重试」；网络请求失败自动重试 3 次，绝不静默失败 |
 | 防卡死 | 每个耗时步骤都有硬超时（截图 15s、识别 30s、翻译 120s、整体 150s）；框选 3 分钟未确认自动取消；若真的卡住（连续 4 分钟无响应）程序会自行退出，**绝不会让选区窗口把桌面锁死** |
 | OCR | ① Windows 内置 OCR（`Windows.Media.Ocr`，离线、免费）② 视觉大模型（OpenAI 兼容 `/chat/completions`，图片以 base64 传入） |
-| 翻译 | ① OpenAI 兼容接口 ② DeepL（Free / Pro）③ 关闭（只 OCR 不翻译） |
-| 结果窗口 | 无边框置顶卡片，自动按内容调整高度；复制原文/译文、重新翻译、`Esc` 关闭、失焦自动关闭（可关） |
+| 翻译 | ① OpenAI 兼容接口（内置 22 家预设：NVIDIA NIM、智谱、DeepSeek、OpenCode Zen、百度千帆、腾讯混元、讯飞星火、Gemini、Groq、Mistral、xAI、Together、DeepInfra、Cerebras、Fireworks…）② DeepL（Free / Pro）③ 微软翻译（Azure）④ 谷歌翻译 ⑤ 有道智云 ⑥ 百度翻译 ⑦ 腾讯云翻译（TMT）⑧ 关闭（只 OCR 不翻译） |
+| 结果窗口 | 无边框置顶卡片，自动按内容调整高度；底部一排「原文 / 译文 / 对照」三态切换，随时只看一边或对照查看；复制、重新翻译、`Esc` 关闭、失焦自动关闭（可关） |
 | 历史记录 | 本地保存最近 N 条识别结果，可搜索查看、单条删除或清空 |
 | 其它 | 开机自启、深浅色主题、中/英文界面、结果字号、自动复制、自定义 Prompt、API Key 一键探测/模型列表拉取 |
 
@@ -68,7 +68,7 @@ npm run tauri build
    - 完全离线：`翻译 = 关闭`，只做 OCR。
 3. 用 `Ctrl + Alt + Z`、或托盘菜单「截图翻译」、或托盘图标左键单击触发截图。
 4. 拖拽框选文字区域，松开鼠标开始识别；`Esc` / 右键取消，再按一次快捷键也能取消。
-5. 结果窗口出现后可：复制、重新翻译、`Esc` 关闭。识别或翻译失败时，窗口会显示原因和「重试」按钮（重试会复用上一次的截图，不必重新框选）。
+5. 结果窗口出现后可：用底部「原文 / 译文 / 对照」切换要看的版本、复制、重新翻译、`Esc` 关闭。识别或翻译失败时，窗口会显示原因和「重试」按钮（重试会复用上一次的截图，不必重新框选）。
 6. 托盘菜单里的「取消本次截图」和「退出 SnapLingo」在**任何时刻**都可用；退出时若 2.5 秒内没有正常结束，进程会被强制结束，不会留下关不掉的窗口。
 
 ---
@@ -90,9 +90,11 @@ npm run tauri build
     "prompt": ""
   },
   "translate": {
-    "provider": "openai",            // openai | deepl | none
+    "provider": "openai",            // openai | deepl | microsoft | google | youdao | baidu | tencent | none
     "baseUrl": "https://integrate.api.nvidia.com/v1",
-    "apiKey": "",
+    "apiKey": "",                    // 谷歌=API Key；有道=应用 ID；百度=AppID；腾讯=SecretId
+    "apiSecret": "",                 // 有道=应用密钥；百度=密钥；腾讯=SecretKey
+    "region": "",                    // 微软必填（如 eastasia）；腾讯可选（如 ap-guangzhou）
     "model": "nvidia/nemotron-3-ultra-550b-a55b",
     "targetLang": "zh-CN",
     "deeplPlan": "free",             // free | pro
@@ -106,8 +108,8 @@ npm run tauri build
   },
   "ui": {
     "autoCopy": false,               // 出结果自动复制译文
-    "showOriginal": true,            // 结果卡片里显示原文
     "closeOnBlur": false,            // 点别处自动关闭结果窗口
+    "resultView": "both",            // both | source | translation（结果窗口默认显示什么）
     "resultFontSize": 16,
     "theme": "system",               // system | light | dark
     "language": "zh"                 // zh | en
@@ -117,7 +119,20 @@ npm run tauri build
 }
 ```
 
-内置预设服务商（设置页可一键填充）：NVIDIA NIM、智谱 GLM、DeepSeek、阿里云百炼、OpenAI、硅基流动、Kimi、OpenRouter、Ollama、LM Studio —— 全部走 OpenAI 兼容协议。
+内置预设服务商（设置页可一键填充）：NVIDIA NIM、智谱 GLM、DeepSeek、阿里云百炼、OpenAI、硅基流动、Kimi、OpenRouter、Ollama、LM Studio、OpenCode Zen、百度千帆、腾讯混元、讯飞星火、Google Gemini、Groq、Mistral、xAI Grok、Together AI、DeepInfra、Cerebras、Fireworks —— 全部走 OpenAI 兼容协议。
+
+除 OpenAI 兼容协议外，还可以直接使用四家云翻译 API 和 DeepL：
+
+| 服务商 | 需要填写 | 说明 |
+| --- | --- | --- |
+| DeepL | API Key、账号类型 | Free 密钥以 `:fx` 结尾 |
+| 微软翻译（Azure） | API Key、区域 | 区域例如 `eastasia`；每月有免费额度 |
+| 谷歌翻译 | API Key | Google Cloud Translation v2，密钥作为 URL 参数发送，建议在控制台限制该密钥 |
+| 有道智云 | 应用 ID、应用密钥 | 文本翻译 v3，签名走 `sha256` |
+| 百度翻译 | AppID、密钥 | 通用文本翻译，签名走 `md5` |
+| 腾讯云翻译 | SecretId、SecretKey、区域（可选） | 机器翻译 TMT，签名走 TC3-HMAC-SHA256，每月 500 万字符免费 |
+
+> 云翻译引擎的目标语言支持范围由各家自己决定（例如有道/百度/腾讯对部分小语种有限制）。如果返回「不支持的语言」，换成该服务商支持的语言，或改用 OpenAI 兼容接口的 LLM 翻译即可。
 
 ### 关于 API Key 的安全说明
 
@@ -156,8 +171,8 @@ OCR：Windows.Media.Ocr（BGRA8 位图，离线）
      或 视觉大模型（image_url 传入，可一次返回译文）
       │
       ▼
-翻译：OpenAI 兼容 / DeepL（长文本按 ~2400 字符分块，
-每个请求最多重试 3 次，自动剥离模型的思考过程与代码块）
+翻译：OpenAI 兼容 LLM / DeepL / 微软 / 谷歌 / 有道 / 百度 / 腾讯
+（LLM 长文本按 ~2400 字符分块；云翻译一次性提交；每个请求最多重试 3 次）
       │
       ▼
 结果窗口（订阅 pipeline:stage / result:update 事件）
@@ -199,7 +214,7 @@ snap-lingo/
       ├─ capture.rs             xcap 截图与显示器信息
       ├─ imageops.rs            裁切、缩放、编码、预览
       ├─ ocr_win.rs             Windows.Media.Ocr 封装
-      ├─ providers.rs           OpenAI 兼容 / DeepL 客户端与重试
+      ├─ providers.rs           LLM / DeepL / 微软 / 谷歌 / 有道 / 百度 / 腾讯客户端与重试
       ├─ pipeline.rs            截图 → 识别 → 翻译 → 发布的编排
       ├─ commands.rs            暴露给前端的 25 个命令
       ├─ windows.rs             各窗口的创建与显隐

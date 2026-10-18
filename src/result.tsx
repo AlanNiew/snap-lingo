@@ -7,11 +7,13 @@ import { createRoot } from "react-dom/client";
 
 import { api, onConfigChanged, onResult, onStage } from "./lib/api";
 import { t as translate, type StringKey } from "./lib/i18n";
-import type { AppConfig, ResultPayload, Stage, StageEvent } from "./lib/types";
+import { PROVIDER_KEYS } from "./lib/labels";
+import type { AppConfig, ResultPayload, Stage, StageEvent, TranslateProvider } from "./lib/types";
 import { copyText, formatDuration } from "./lib/util";
 import "./styles.css";
 
 const BUSY: Stage[] = ["capturing", "ocr", "translate"];
+type ResultView = "both" | "source" | "translation";
 
 function statusKey(stage: Stage): StringKey {
   switch (stage) {
@@ -35,6 +37,8 @@ export function ResultWindow() {
   const [payload, setPayload] = useState<ResultPayload | null>(null);
   const [stage, setStage] = useState<StageEvent | null>(null);
   const [copied, setCopied] = useState(false);
+  /** Temporary override of the configured view, per result window. */
+  const [localView, setLocalView] = useState<ResultView | null>(null);
 
   const root = useRef<HTMLDivElement>(null);
   const autoCopied = useRef<string | null>(null);
@@ -44,6 +48,14 @@ export function ResultWindow() {
     (key: StringKey, vars?: Record<string, string | number>) => translate(lang, key, vars),
     [lang],
   );
+
+  /* -- derived state (declared before the hooks that depend on it) ---------- */
+
+  const view: ResultView = localView ?? config?.ui.resultView ?? "both";
+  const sourceText = payload?.sourceText ?? "";
+  const targetText = payload?.error ? "" : payload?.translatedText?.trim() ?? "";
+  /** Copy what is on screen: the source in source-only mode, otherwise the translation. */
+  const copyBody = view === "source" ? sourceText : targetText || sourceText;
 
   /* -------------------------------------------------------------------- boot */
 
@@ -152,18 +164,12 @@ export function ResultWindow() {
       cancelAnimationFrame(raf);
       observer.disconnect();
     };
-  }, [payload, stage, config?.ui.resultFontSize, config?.ui.showOriginal]);
+  }, [payload, stage, config?.ui.resultFontSize, config?.ui.resultView, view]);
 
   /* ------------------------------------------------------------- interactions */
 
-  const body = payload?.error
-    ? ""
-    : payload
-      ? payload.translatedText?.trim() || (payload.translateProvider === "none" ? payload.sourceText : "")
-      : "";
-
   const copy = async () => {
-    const text = body || payload?.sourceText || "";
+    const text = copyBody || payload?.sourceText || "";
     const ok = await copyText(text);
     if (ok) {
       setCopied(true);
@@ -210,11 +216,27 @@ export function ResultWindow() {
       ? tt(statusKey(stage.stage))
       : tt("loading")
     : tt("loading");
-  const showOriginal = Boolean(config?.ui.showOriginal && payload?.sourceText);
   const fontSize = config?.ui.resultFontSize ?? 14;
   // Retry stays available for every finished run — a failed OCR, a failed
   // translation, or simply wanting another attempt with a different model.
   const canRetry = Boolean(payload) && !busy;
+  const done = Boolean(payload && !payload.error && !busy);
+  const ocrLabel =
+    payload?.ocrProvider === "winocr"
+      ? tt("ocrWin")
+      : payload?.ocrProvider === "vision"
+        ? tt("ocrVision")
+        : (payload?.ocrProvider ?? "");
+  const providerLabel =
+    payload && payload.translateProvider !== "none"
+      ? tt(PROVIDER_KEYS[payload.translateProvider as TranslateProvider] ?? "translateOpenai")
+      : "";
+
+  const viewOptions: Array<{ id: ResultView; key: StringKey }> = [
+    { id: "source", key: "viewSource" },
+    { id: "translation", key: "viewTranslation" },
+    { id: "both", key: "viewBoth" },
+  ];
 
   return (
     <div className="result" ref={root}>
@@ -225,9 +247,7 @@ export function ResultWindow() {
         <span className="result-status">
           {busy ? <span className="spinner" /> : null}
           <span>{busy ? stageText : payload?.error ? tt("resultError") : tt("resultDone")}</span>
-          {payload && !busy && !payload.error ? (
-            <span className="nav-count">{formatDuration(payload.elapsedMs)}</span>
-          ) : null}
+          {done ? <span className="nav-count">{formatDuration(payload?.elapsedMs ?? 0)}</span> : null}
         </span>
       </header>
 
@@ -242,35 +262,58 @@ export function ResultWindow() {
           </div>
         ) : null}
 
-        {payload && !payload.error && !busy ? (
+        {done ? (
           <>
-            {payload.preview ? <img className="result-preview" src={payload.preview} alt="" /> : null}
-            <div className="result-text" style={{ fontSize }}>
-              {body ? body : <span className="result-placeholder">{tt("noTranslation")}</span>}
-            </div>
-            {showOriginal ? (
-              <details className="result-src">
-                <summary>{tt("original")}</summary>
-                <div className="result-src-text">{payload.sourceText}</div>
-              </details>
+            {payload?.preview ? <img className="result-preview" src={payload.preview} alt="" /> : null}
+
+            {view !== "source" ? (
+              <section className="result-pane">
+                {view === "both" ? <div className="result-pane-label">{tt("viewTranslation")}</div> : null}
+                <div className="result-text" style={{ fontSize }}>
+                  {targetText ? targetText : <span className="result-placeholder">{tt("noTranslation")}</span>}
+                </div>
+              </section>
             ) : null}
+
+            {view === "both" && sourceText ? <div className="result-divider" /> : null}
+
+            {view !== "translation" ? (
+              <section className="result-pane">
+                {view === "both" ? <div className="result-pane-label">{tt("viewSource")}</div> : null}
+                <div className="result-src-text" style={view === "source" ? { fontSize } : undefined}>
+                  {sourceText ? sourceText : <span className="result-placeholder">{tt("empty")}</span>}
+                </div>
+              </section>
+            ) : null}
+
             <div className="result-meta">
-              <span className="badge">{payload.ocrProvider}</span>
-              {payload.translateProvider !== "none" ? (
-                <span className="badge">{payload.translateProvider}</span>
-              ) : null}
-              {payload.model ? <span className="badge">{payload.model}</span> : null}
+              {ocrLabel ? <span className="badge">{ocrLabel}</span> : null}
+              {providerLabel ? <span className="badge badge-accent">{providerLabel}</span> : null}
+              {payload?.model ? <span className="badge">{payload.model}</span> : null}
             </div>
           </>
         ) : null}
       </div>
 
       <footer className="result-foot">
-        {payload && !payload.error && !busy ? (
-          <button className="btn btn-primary btn-sm" onClick={copy}>
-            {copied ? tt("copied") : tt("copy")}
-          </button>
+        {payload && !payload.error ? (
+          <div className="result-view" role="group" aria-label={tt("resultView")}>
+            {viewOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                disabled={busy}
+                data-active={view === option.id}
+                onClick={() => setLocalView(option.id)}
+              >
+                {tt(option.key)}
+              </button>
+            ))}
+          </div>
         ) : null}
+
+        <span className="spacer" />
+
         {canRetry ? (
           <button
             className="btn btn-sm"
@@ -280,12 +323,14 @@ export function ResultWindow() {
             {tt("retryTranslate")}
           </button>
         ) : null}
-        <span className="spacer" />
-        <span className="result-status">
-          <button className="btn btn-sm btn-ghost" onClick={() => void api.hideResult()}>
-            {tt("close")}
+        {done ? (
+          <button className="btn btn-primary btn-sm" onClick={copy}>
+            {copied ? tt("copied") : tt("copy")}
           </button>
-        </span>
+        ) : null}
+        <button className="btn btn-sm btn-ghost" onClick={() => void api.hideResult()}>
+          {tt("close")}
+        </button>
       </footer>
     </div>
   );

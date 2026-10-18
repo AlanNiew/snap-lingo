@@ -2,7 +2,8 @@
 import { useState } from "react";
 
 import { api, type MonitorInfo, type OcrLanguage } from "../lib/api";
-import type { AppConfig, ConnectionCheck, HistoryItem, ProviderPreset } from "../lib/types";
+import { PROVIDER_KEYS } from "../lib/labels";
+import type { AppConfig, ConnectionCheck, HistoryItem, ProviderPreset, TranslateProvider } from "../lib/types";
 import { copyText, formatClock, formatDuration, truncate } from "../lib/util";
 import { useT } from "./context";
 import {
@@ -170,12 +171,15 @@ function EndpointFields({
   apiKey,
   model,
   set,
+  onTest,
 }: {
   kind: "ocr" | "translate";
   baseUrl: string;
   apiKey: string;
   model: string;
   set: (patch: Partial<{ baseUrl: string; apiKey: string; model: string }>) => void;
+  /** Overrides the built-in OpenAI-compatible check (used by other engines). */
+  onTest?: () => Promise<ConnectionCheck>;
 }) {
   const { t } = useT();
   const [models, setModels] = useState<string[]>([]);
@@ -200,7 +204,7 @@ function EndpointFields({
     if (busy) return;
     setBusy("test");
     try {
-      setCheck(await api.testConnection(kind, baseUrl, apiKey, model));
+      setCheck(onTest ? await onTest() : await api.testOcrConnection(baseUrl, apiKey, model));
     } catch (error) {
       setCheck({ ok: false, message: String(error), elapsedMs: 0, sample: null });
     } finally {
@@ -403,14 +407,69 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
 
 /* =============================================================== translate */
 
+/** Connection check for the engines that are not plain OpenAI-compatible. */
+function TranslateTest({ config }: { config: AppConfig }) {
+  const { t } = useT();
+  const [busy, setBusy] = useState(false);
+  const [check, setCheck] = useState<ConnectionCheck | null>(null);
+
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      setCheck(await api.testTranslateConnection(config.translate));
+    } catch (error) {
+      setCheck({ ok: false, message: String(error), elapsedMs: 0, sample: null });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Row title={t("testConnection")}>
+        <button className="btn" disabled={busy} onClick={run}>
+          {busy ? <span className="spinner" /> : null}
+          {busy ? t("testing") : t("testConnection")}
+        </button>
+      </Row>
+      {check ? (
+        <div className={`note ${check.ok ? "note-ok" : "note-bad"}`}>
+          <span>
+            {check.message}
+            {check.ok ? ` · ${formatDuration(check.elapsedMs)}` : ""}
+            {check.ok && check.sample ? ` · ${truncate(check.sample, 60)}` : ""}
+          </span>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function TranslateSection({ config, patch, notify }: Base) {
   const { t } = useT();
   const provider = config.translate.provider;
   const isOpenai = provider === "openai";
   const isDeepl = provider === "deepl";
+  const isMicrosoft = provider === "microsoft";
+  const needsSecret = provider === "youdao" || provider === "baidu" || provider === "tencent";
+  const needsRegion = isMicrosoft || provider === "tencent";
+  const secretLabel =
+    provider === "youdao" ? t("secretYoudao") : provider === "baidu" ? t("secretBaidu") : t("secretTencent");
 
   const setTranslate = (next: Partial<AppConfig["translate"]>, immediate = false) =>
     patch((cfg) => ({ ...cfg, translate: { ...cfg.translate, ...next } }), immediate);
+
+  const engines: Array<{ id: TranslateProvider; title: string; desc: string }> = [
+    { id: "openai", title: t("translateOpenai"), desc: t("translateOpenaiDesc") },
+    { id: "deepl", title: t("translateDeepl"), desc: t("translateDeeplDesc") },
+    { id: "microsoft", title: t("translateMicrosoft"), desc: t("translateMicrosoftDesc") },
+    { id: "google", title: t("translateGoogle"), desc: t("translateGoogleDesc") },
+    { id: "youdao", title: t("translateYoudao"), desc: t("translateYoudaoDesc") },
+    { id: "baidu", title: t("translateBaidu"), desc: t("translateBaiduDesc") },
+    { id: "tencent", title: t("translateTencent"), desc: t("translateTencentDesc") },
+    { id: "none", title: t("translateNone"), desc: t("translateNoneDesc") },
+  ];
 
   return (
     <>
@@ -419,24 +478,15 @@ export function TranslateSection({ config, patch, notify }: Base) {
 
       <Card>
         <div role="radiogroup">
-          <OptionCard
-            checked={isOpenai}
-            onSelect={() => setTranslate({ provider: "openai" }, true)}
-            title={t("translateOpenai")}
-            desc={t("translateOpenaiDesc")}
-          />
-          <OptionCard
-            checked={isDeepl}
-            onSelect={() => setTranslate({ provider: "deepl" }, true)}
-            title={t("translateDeepl")}
-            desc={t("translateDeeplDesc")}
-          />
-          <OptionCard
-            checked={provider === "none"}
-            onSelect={() => setTranslate({ provider: "none" }, true)}
-            title={t("translateNone")}
-            desc={t("translateNoneDesc")}
-          />
+          {engines.map((engine) => (
+            <OptionCard
+              key={engine.id}
+              checked={provider === engine.id}
+              onSelect={() => setTranslate({ provider: engine.id }, true)}
+              title={engine.title}
+              desc={engine.desc}
+            />
+          ))}
         </div>
       </Card>
 
@@ -461,6 +511,7 @@ export function TranslateSection({ config, patch, notify }: Base) {
               apiKey={config.translate.apiKey}
               model={config.translate.model}
               set={(next) => setTranslate(next, false)}
+              onTest={() => api.testTranslateConnection(config.translate)}
             />
             <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
               <PresetRow
@@ -508,6 +559,45 @@ export function TranslateSection({ config, patch, notify }: Base) {
                 ]}
               />
             </Field>
+            <TranslateTest config={config} />
+          </div>
+        </Card>
+      ) : null}
+
+      {!isOpenai && !isDeepl && provider !== "none" ? (
+        <Card title={t("endpointKey")} note={t("secretHint")}>
+          <div className="stack">
+            <Field label={t("endpointKey")} hint={t("endpointKeyHint")}>
+              <SecretInput
+                value={config.translate.apiKey}
+                onChange={(value) => setTranslate({ apiKey: value })}
+                placeholder="…"
+                showLabel={t("showKey")}
+                hideLabel={t("hideKey")}
+              />
+            </Field>
+            {needsSecret ? (
+              <Field label={secretLabel}>
+                <SecretInput
+                  value={config.translate.apiSecret}
+                  onChange={(value) => setTranslate({ apiSecret: value })}
+                  placeholder="…"
+                  showLabel={t("showKey")}
+                  hideLabel={t("hideKey")}
+                />
+              </Field>
+            ) : null}
+            {needsRegion ? (
+              <Field label={t("region")} hint={t("regionHint")}>
+                <TextInput
+                  mono
+                  value={config.translate.region}
+                  onChange={(value) => setTranslate({ region: value })}
+                  placeholder={isMicrosoft ? "eastasia" : "ap-guangzhou"}
+                />
+              </Field>
+            ) : null}
+            <TranslateTest config={config} />
           </div>
         </Card>
       ) : null}
@@ -632,8 +722,16 @@ export function AppearanceSection({ config, patch }: Base) {
             format={(value) => `${value} px`}
           />
         </Row>
-        <Row title={t("showOriginal")} hint={t("showOriginalHint")}>
-          <Switch checked={config.ui.showOriginal} onChange={(next) => setUi({ showOriginal: next }, true)} />
+        <Row title={t("resultView")} hint={t("resultViewHint")}>
+          <Select
+            value={config.ui.resultView}
+            onChange={(value) => setUi({ resultView: value as AppConfig["ui"]["resultView"] }, true)}
+            options={[
+              { value: "both", label: t("resultViewBoth") },
+              { value: "source", label: t("resultViewSource") },
+              { value: "translation", label: t("resultViewTranslation") },
+            ]}
+          />
         </Row>
         <Row title={t("autoCopy")} hint={t("autoCopyHint")}>
           <Switch checked={config.ui.autoCopy} onChange={(next) => setUi({ autoCopy: next }, true)} />
@@ -768,11 +866,7 @@ export function AboutSection({
             </div>
             <div className="row-hint">
               {t("aboutVersion")} {__APP_VERSION__} · {config.ocr.provider === "winocr" ? t("ocrWin") : t("ocrVision")} +{" "}
-              {config.translate.provider === "none"
-                ? t("translateNone")
-                : config.translate.provider === "deepl"
-                  ? "DeepL"
-                  : t("translateOpenai")}
+              {t(PROVIDER_KEYS[config.translate.provider])}
             </div>
           </div>
           <div className="row-control">

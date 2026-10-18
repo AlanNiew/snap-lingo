@@ -8,7 +8,9 @@
 use crate::config::{OcrConfig, TranslateConfig};
 use crate::model::ConnectionCheck;
 use anyhow::{anyhow, bail, Context, Result};
+use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -97,6 +99,11 @@ impl Providers {
         match cfg.provider.as_str() {
             "none" => Ok(String::new()),
             "deepl" => self.deepl(cfg, text).await,
+            "microsoft" => self.microsoft(cfg, text).await,
+            "google" => self.google(cfg, text).await,
+            "youdao" => self.youdao(cfg, text).await,
+            "baidu" => self.baidu(cfg, text).await,
+            "tencent" => self.tencent(cfg, text).await,
             _ => self.translate_chat(cfg, text).await,
         }
     }
@@ -173,6 +180,284 @@ impl Providers {
         Ok(out.join("\n"))
     }
 
+    /* ------------------------------------ dedicated translation services */
+
+    /// Azure AI Translator (Microsoft). A subscription key plus an optional
+    /// region — required when the key belongs to a multi-service resource.
+    async fn microsoft(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
+        require_key(&cfg.api_key, "微软翻译")?;
+        let endpoint = if cfg.base_url.trim().is_empty() {
+            "https://api.cognitive.microsofttranslator.com/translate".to_string()
+        } else {
+            format!("{}/translate", cfg.base_url.trim().trim_end_matches('/'))
+        };
+        let url = format!(
+            "{endpoint}?api-version=3.0&to={}",
+            microsoft_target(&cfg.target_lang)
+        );
+        let key = cfg.api_key.trim().to_string();
+        let region = cfg.region.trim().to_string();
+
+        let mut out = Vec::new();
+        for chunk in chunk_text(text, CHUNK_CHARS) {
+            let body = json!([{ "Text": chunk }]);
+            let resp = self
+                .send_with_retry(
+                    || {
+                        let mut req = self
+                            .client
+                            .post(&url)
+                            .header("Content-Type", "application/json; charset=utf-8")
+                            .header("Ocp-Apim-Subscription-Key", key.as_str())
+                            .json(&body);
+                        if !region.is_empty() {
+                            req = req.header("Ocp-Apim-Subscription-Region", region.as_str());
+                        }
+                        req
+                    },
+                    "微软翻译",
+                )
+                .await?;
+            let parsed: Value =
+                serde_json::from_str(&resp).context("微软翻译返回的不是 JSON")?;
+            let translated = parsed
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|item| item.get("translations"))
+                .and_then(|t| t.as_array())
+                .map(|arr| join_strings(arr, "text"))
+                .unwrap_or_default();
+            if translated.trim().is_empty() {
+                bail!("微软翻译返回了空译文：请检查密钥、区域（Region）与目标语言是否匹配。");
+            }
+            out.push(translated);
+        }
+        Ok(out.join("\n"))
+    }
+
+    /// Google Cloud Translation v2, API key in the query string.
+    async fn google(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
+        require_key(&cfg.api_key, "谷歌翻译")?;
+        let base = if cfg.base_url.trim().is_empty() {
+            "https://translation.googleapis.com/language/translate/v2".to_string()
+        } else {
+            cfg.base_url.trim().trim_end_matches('/').to_string()
+        };
+        let url = format!("{base}?key={}", cfg.api_key.trim());
+        let target = google_target(&cfg.target_lang);
+
+        let mut out = Vec::new();
+        for chunk in chunk_text(text, CHUNK_CHARS) {
+            let body = json!({ "q": [chunk], "target": target, "format": "text" });
+            let resp = self
+                .send_with_retry(|| self.client.post(&url).json(&body), "谷歌翻译")
+                .await?;
+            let parsed: Value = serde_json::from_str(&resp).context("谷歌翻译返回的不是 JSON")?;
+            let translated = parsed
+                .pointer("/data/translations")
+                .and_then(|t| t.as_array())
+                .map(|arr| join_strings(arr, "translatedText"))
+                .map(|s| unescape_html(&s))
+                .unwrap_or_default();
+            if translated.trim().is_empty() {
+                bail!("谷歌翻译返回了空译文：请确认该 API Key 已开通 Cloud Translation API。");
+            }
+            out.push(translated);
+        }
+        Ok(out.join("\n"))
+    }
+
+    /// Youdao Zhiyun text translation. v3 signature over a form body.
+    async fn youdao(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
+        require_key(&cfg.api_key, "有道翻译")?;
+        if cfg.api_secret.trim().is_empty() {
+            bail!("有道翻译需要两项凭据：应用 ID 与应用密钥。");
+        }
+        let endpoint = if cfg.base_url.trim().is_empty() {
+            "https://openapi.youdao.com/api".to_string()
+        } else {
+            cfg.base_url.trim().to_string()
+        };
+        let app_key = cfg.api_key.trim().to_string();
+        let app_secret = cfg.api_secret.trim().to_string();
+        let to = youdao_target(&cfg.target_lang);
+
+        let mut out = Vec::new();
+        for chunk in chunk_text(text, CHUNK_CHARS) {
+            let salt = crate::model::new_id();
+            let curtime = (crate::model::now_ms() / 1000).to_string();
+            let input = youdao_input(&chunk);
+            let sign = sha256_hex(&format!("{app_key}{input}{salt}{curtime}{app_secret}"));
+            let body = form_encode(&[
+                ("q", chunk.as_str()),
+                ("from", "auto"),
+                ("to", to.as_str()),
+                ("appKey", app_key.as_str()),
+                ("salt", salt.as_str()),
+                ("sign", sign.as_str()),
+                ("signType", "v3"),
+                ("curtime", curtime.as_str()),
+            ]);
+            let resp = self
+                .send_with_retry(
+                    || {
+                        self.client
+                            .post(&endpoint)
+                            .header("Content-Type", "application/x-www-form-urlencoded")
+                            .body(body.clone())
+                    },
+                    "有道翻译",
+                )
+                .await?;
+            let parsed: Value = serde_json::from_str(&resp).context("有道翻译返回的不是 JSON")?;
+            let code = parsed
+                .get("errorCode")
+                .and_then(|c| c.as_str())
+                .unwrap_or_default();
+            if code != "0" {
+                bail!("有道翻译报错 {code}：{}", youdao_error(code));
+            }
+            let translated = parsed
+                .get("translation")
+                .and_then(|t| t.as_array())
+                .map(|arr| join_strings(arr, ""))
+                .unwrap_or_default();
+            if translated.trim().is_empty() {
+                bail!("有道翻译返回了空译文。");
+            }
+            out.push(translated);
+        }
+        Ok(out.join("\n"))
+    }
+
+    /// Baidu Translate open API. md5 signature over a form body.
+    async fn baidu(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
+        require_key(&cfg.api_key, "百度翻译")?;
+        if cfg.api_secret.trim().is_empty() {
+            bail!("百度翻译需要两项凭据：APP ID 与密钥。");
+        }
+        let endpoint = if cfg.base_url.trim().is_empty() {
+            "https://fanyi-api.baidu.com/api/trans/vip/translate".to_string()
+        } else {
+            cfg.base_url.trim().to_string()
+        };
+        let app_id = cfg.api_key.trim().to_string();
+        let key = cfg.api_secret.trim().to_string();
+        let to = baidu_target(&cfg.target_lang);
+
+        let mut out = Vec::new();
+        for chunk in chunk_text(text, CHUNK_CHARS) {
+            let salt = crate::model::new_id();
+            let sign = md5_hex(&format!("{app_id}{chunk}{salt}{key}"));
+            let body = form_encode(&[
+                ("q", chunk.as_str()),
+                ("from", "auto"),
+                ("to", to.as_str()),
+                ("appid", app_id.as_str()),
+                ("salt", salt.as_str()),
+                ("sign", sign.as_str()),
+            ]);
+            let resp = self
+                .send_with_retry(
+                    || {
+                        self.client
+                            .post(&endpoint)
+                            .header("Content-Type", "application/x-www-form-urlencoded")
+                            .body(body.clone())
+                    },
+                    "百度翻译",
+                )
+                .await?;
+            let parsed: Value = serde_json::from_str(&resp).context("百度翻译返回的不是 JSON")?;
+            if let Some(code) = parsed.get("error_code").and_then(|c| c.as_str()) {
+                bail!("百度翻译报错 {code}：{}", baidu_error(code));
+            }
+            let translated = parsed
+                .get("trans_result")
+                .and_then(|t| t.as_array())
+                .map(|arr| join_strings(arr, "dst"))
+                .unwrap_or_default();
+            if translated.trim().is_empty() {
+                bail!("百度翻译返回了空译文。");
+            }
+            out.push(translated);
+        }
+        Ok(out.join("\n"))
+    }
+
+    /// Tencent Cloud machine translation (TMT). TC3-HMAC-SHA256 signed.
+    async fn tencent(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
+        require_key(&cfg.api_key, "腾讯翻译")?;
+        if cfg.api_secret.trim().is_empty() {
+            bail!("腾讯翻译需要两项凭据：SecretId 与 SecretKey。");
+        }
+        let host = if cfg.base_url.trim().is_empty() {
+            "tmt.tencentcloudapi.com".to_string()
+        } else {
+            host_of(cfg.base_url.trim())
+        };
+        let url = format!("https://{host}/");
+        let region = if cfg.region.trim().is_empty() {
+            "ap-guangzhou".to_string()
+        } else {
+            cfg.region.trim().to_string()
+        };
+        let secret_id = cfg.api_key.trim().to_string();
+        let secret_key = cfg.api_secret.trim().to_string();
+        let to = tencent_target(&cfg.target_lang);
+
+        let mut out = Vec::new();
+        for chunk in chunk_text(text, CHUNK_CHARS) {
+            let payload = json!({
+                "SourceText": chunk,
+                "Source": "auto",
+                "Target": to,
+                "ProjectId": 0,
+            })
+            .to_string();
+            let timestamp = crate::model::now_ms() / 1000;
+            let date = utc_date(timestamp);
+            let authorization =
+                tc3_authorization(&secret_id, &secret_key, &host, &payload, timestamp, &date);
+            let resp = self
+                .send_with_retry(
+                    || {
+                        self.client
+                            .post(&url)
+                            .header("Authorization", authorization.as_str())
+                            .header("Content-Type", "application/json; charset=utf-8")
+                            .header("X-TC-Action", "TextTranslate")
+                            .header("X-TC-Version", "2018-03-21")
+                            .header("X-TC-Timestamp", timestamp.to_string())
+                            .header("X-TC-Region", region.as_str())
+                            .body(payload.clone())
+                    },
+                    "腾讯翻译",
+                )
+                .await?;
+            let parsed: Value = serde_json::from_str(&resp).context("腾讯翻译返回的不是 JSON")?;
+            let response = parsed.get("Response").cloned().unwrap_or(Value::Null);
+            if let Some(err) = response.get("Error") {
+                let code = err
+                    .get("Code")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("未知错误");
+                let message = err.get("Message").and_then(|m| m.as_str()).unwrap_or("");
+                bail!("腾讯翻译报错 {code}：{message}");
+            }
+            let translated = response
+                .get("TargetText")
+                .and_then(|t| t.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if translated.trim().is_empty() {
+                bail!("腾讯翻译返回了空译文。");
+            }
+            out.push(translated);
+        }
+        Ok(out.join("\n"))
+    }
+
     /* ------------------------------------------------------------ misc */
 
     pub async fn list_models(&self, base_url: &str, api_key: &str) -> Result<Vec<String>> {
@@ -230,6 +515,41 @@ impl Providers {
                 },
                 elapsed_ms,
                 sample: Some(text.chars().take(120).collect()),
+            },
+            Err(err) => ConnectionCheck {
+                ok: false,
+                message: format!("{err:#}"),
+                elapsed_ms,
+                sample: None,
+            },
+        }
+    }
+
+    /// Prove the configured translation engine works, whichever one it is.
+    pub async fn test_translate(&self, cfg: &TranslateConfig) -> ConnectionCheck {
+        let started = Instant::now();
+        if cfg.provider == "none" {
+            return ConnectionCheck {
+                ok: true,
+                message: "当前设置为「不翻译」，截图只显示识别到的原文。".to_string(),
+                elapsed_ms: 0,
+                sample: None,
+            };
+        }
+        let result = self.translate(cfg, "Hello, world!").await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        match result {
+            Ok(text) if !text.trim().is_empty() => ConnectionCheck {
+                ok: true,
+                message: format!("{}连接正常", provider_label(&cfg.provider)),
+                elapsed_ms,
+                sample: Some(text.trim().chars().take(120).collect()),
+            },
+            Ok(_) => ConnectionCheck {
+                ok: false,
+                message: format!("{}返回了空译文。", provider_label(&cfg.provider)),
+                elapsed_ms,
+                sample: None,
             },
             Err(err) => ConnectionCheck {
                 ok: false,
@@ -658,6 +978,251 @@ pub fn deepl_target(tag: &str) -> String {
     }
 }
 
+/* ------------------------------------------- provider-specific plumbing */
+
+/// Human-facing name of a provider, used on the result badge and in the
+/// "connection ok" message.
+pub fn provider_label(provider: &str) -> &'static str {
+    match provider {
+        "openai" => "大模型",
+        "deepl" => "DeepL",
+        "microsoft" => "微软翻译",
+        "google" => "谷歌翻译",
+        "youdao" => "有道翻译",
+        "baidu" => "百度翻译",
+        "tencent" => "腾讯翻译",
+        "winocr" => "Windows 离线 OCR",
+        "vision" => "视觉模型",
+        "none" => "不翻译",
+        _ => "翻译服务",
+    }
+}
+
+/// Fold a language tag to `zh-CN` / `zh-TW` / a bare primary subtag.
+fn base_tag(tag: &str) -> String {
+    let t = tag.trim();
+    match t {
+        "zh" | "zh-Hans" | "zh-CN" | "zh-SG" => "zh-CN".to_string(),
+        "zh-TW" | "zh-Hant" | "zh-HK" => "zh-TW".to_string(),
+        "en" | "en-US" | "en-GB" => "en".to_string(),
+        other => other.split('-').next().unwrap_or(other).to_string(),
+    }
+}
+
+pub fn youdao_target(tag: &str) -> String {
+    match base_tag(tag).as_str() {
+        "zh-CN" => "zh-CHS".to_string(),
+        "zh-TW" => "zh-CHT".to_string(),
+        other => other.to_string(),
+    }
+}
+
+pub fn baidu_target(tag: &str) -> String {
+    match base_tag(tag).as_str() {
+        "zh-CN" => "zh".to_string(),
+        "zh-TW" => "cht".to_string(),
+        "ja" => "jp".to_string(),
+        "ko" => "kor".to_string(),
+        "fr" => "fra".to_string(),
+        "es" => "spa".to_string(),
+        "ar" => "ara".to_string(),
+        "vi" => "vie".to_string(),
+        other => other.to_string(),
+    }
+}
+
+pub fn tencent_target(tag: &str) -> String {
+    match base_tag(tag).as_str() {
+        "zh-CN" => "zh".to_string(),
+        other => other.to_string(),
+    }
+}
+
+pub fn microsoft_target(tag: &str) -> String {
+    match base_tag(tag).as_str() {
+        "zh-CN" => "zh-Hans".to_string(),
+        "zh-TW" => "zh-Hant".to_string(),
+        other => other.to_string(),
+    }
+}
+
+pub fn google_target(tag: &str) -> String {
+    base_tag(tag)
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn sha256_hex(data: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data.as_bytes());
+    hex_encode(&hasher.finalize())
+}
+
+fn md5_hex(data: &str) -> String {
+    format!("{:x}", md5::compute(data.as_bytes()))
+}
+
+fn hmac_sha256(key: &[u8], message: &str) -> Vec<u8> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts keys of any length");
+    mac.update(message.as_bytes());
+    mac.finalize().into_bytes().to_vec()
+}
+
+/// Percent-encode a value for an `application/x-www-form-urlencoded` body.
+fn url_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char)
+            }
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
+fn form_encode(pairs: &[(&str, &str)]) -> String {
+    pairs
+        .iter()
+        .map(|(key, value)| format!("{}={}", url_encode(key), url_encode(value)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// Join an array of plain strings (`key` empty) or of objects holding `key`.
+fn join_strings(items: &[Value], key: &str) -> String {
+    items
+        .iter()
+        .filter_map(|item| {
+            if key.is_empty() {
+                item.as_str()
+            } else {
+                item.get(key).and_then(|v| v.as_str())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Google escapes its translations as HTML entities.
+fn unescape_html(text: &str) -> String {
+    text.replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+}
+
+/// Youdao v3 signs a trimmed form of the query.
+fn youdao_input(query: &str) -> String {
+    let chars: Vec<char> = query.chars().collect();
+    if chars.len() <= 20 {
+        query.to_string()
+    } else {
+        let head: String = chars.iter().take(10).collect();
+        let tail: String = chars.iter().skip(chars.len() - 10).collect();
+        format!("{head}{}{tail}", chars.len())
+    }
+}
+
+fn youdao_error(code: &str) -> &'static str {
+    match code {
+        "101" => "缺少必填参数",
+        "102" => "不支持的语言类型",
+        "103" => "翻译文本过长",
+        "104" => "不支持的 API 类型",
+        "105" => "不支持的签名类型",
+        "106" => "不支持的响应类型",
+        "107" => "不支持的传输加密类型",
+        "108" => "应用 ID 无效：请核对有道智云控制台里的应用 ID",
+        "110" => "无相关服务的有效实例",
+        "111" => "开发者账号无效",
+        "113" => "待翻译内容不能为空",
+        "201" => "解密失败，请检查加密方式",
+        "202" => "签名校验失败：请核对应用密钥（appSecret）",
+        "203" => "访问 IP 不在可访问列表内",
+        "401" => "账户已欠费",
+        "411" => "访问频率受限",
+        _ => "请核对应用 ID 与应用密钥",
+    }
+}
+
+fn baidu_error(code: &str) -> &'static str {
+    match code {
+        "52001" => "请求超时，请重试",
+        "52002" => "系统错误，请重试",
+        "52003" => "未授权用户：请核对 APP ID 与密钥",
+        "54000" => "必填参数为空",
+        "54001" => "签名错误：请核对密钥",
+        "54003" => "访问频率受限",
+        "54004" => "账户余额不足",
+        "54005" => "长文本请求过于频繁",
+        "58000" => "客户端 IP 非法：请在百度控制台配置 IP 白名单",
+        "58001" => "译文语言方向不支持",
+        "58002" => "服务当前已关闭",
+        "90107" => "认证未通过或未生效",
+        _ => "请核对 APP ID 与密钥",
+    }
+}
+
+fn host_of(url: &str) -> String {
+    let without_scheme = url.split("://").last().unwrap_or(url);
+    without_scheme
+        .split(['/', '?'])
+        .next()
+        .unwrap_or(without_scheme)
+        .to_string()
+}
+
+/// `YYYY-MM-DD` in UTC (Tencent's TC3 credential scope needs it).
+fn utc_date(epoch_seconds: u64) -> String {
+    let days = (epoch_seconds / 86_400) as i64;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year_base = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year_base + 1 } else { year_base };
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// TC3-HMAC-SHA256 as specified by Tencent Cloud.
+fn tc3_authorization(
+    secret_id: &str,
+    secret_key: &str,
+    host: &str,
+    payload: &str,
+    timestamp: u64,
+    date: &str,
+) -> String {
+    let signed_headers = "content-type;host";
+    let canonical_headers = format!("content-type:application/json; charset=utf-8\nhost:{host}\n");
+    let canonical_request = format!(
+        "POST\n/\n\n{canonical_headers}\n{signed_headers}\n{}",
+        sha256_hex(payload)
+    );
+    let credential_scope = format!("{date}/tmt/tc3_request");
+    let string_to_sign = format!(
+        "TC3-HMAC-SHA256\n{timestamp}\n{credential_scope}\n{}",
+        sha256_hex(&canonical_request)
+    );
+    let secret_date = hmac_sha256(format!("TC3{secret_key}").as_bytes(), date);
+    let secret_service = hmac_sha256(&secret_date, "tmt");
+    let secret_signing = hmac_sha256(&secret_service, "tc3_request");
+    let signature = hex_encode(&hmac_sha256(&secret_signing, &string_to_sign));
+    format!(
+        "TC3-HMAC-SHA256 Credential={secret_id}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,6 +1236,88 @@ mod tests {
         assert_eq!(clean_model_text("\"你好\""), "你好");
         // An unclosed thinking block must not leak its contents.
         assert_eq!(clean_model_text("<think>secret 你好"), "");
+    }
+
+    #[test]
+    fn language_codes_are_mapped_per_provider() {
+        assert_eq!(youdao_target("zh-CN"), "zh-CHS");
+        assert_eq!(youdao_target("zh-TW"), "zh-CHT");
+        assert_eq!(youdao_target("en-US"), "en");
+        assert_eq!(baidu_target("zh-CN"), "zh");
+        assert_eq!(baidu_target("zh-TW"), "cht");
+        assert_eq!(baidu_target("ja"), "jp");
+        assert_eq!(baidu_target("ko"), "kor");
+        assert_eq!(tencent_target("zh-CN"), "zh");
+        assert_eq!(tencent_target("zh-TW"), "zh-TW");
+        assert_eq!(microsoft_target("zh-CN"), "zh-Hans");
+        assert_eq!(microsoft_target("zh-TW"), "zh-Hant");
+        assert_eq!(google_target("zh-CN"), "zh-CN");
+        assert_eq!(google_target("de"), "de");
+    }
+
+    #[test]
+    fn hashes_match_known_vectors() {
+        // A typo in the plumbing then shows up here instead of as a 403 from
+        // the provider.
+        assert_eq!(
+            sha256_hex("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
+        assert_eq!(
+            hex_encode(&hmac_sha256(b"key", "The quick brown fox jumps over the lazy dog")),
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+        );
+    }
+
+    #[test]
+    fn tencent_signature_is_deterministic() {
+        let a = tc3_authorization(
+            "AKID",
+            "SECRET",
+            "tmt.tencentcloudapi.com",
+            "{}",
+            1_700_000_000,
+            "2023-11-14",
+        );
+        let b = tc3_authorization(
+            "AKID",
+            "SECRET",
+            "tmt.tencentcloudapi.com",
+            "{}",
+            1_700_000_000,
+            "2023-11-14",
+        );
+        assert_eq!(a, b);
+        assert!(a.starts_with("TC3-HMAC-SHA256 Credential=AKID/2023-11-14/tmt/tc3_request"));
+        assert!(a.contains("SignedHeaders=content-type;host"));
+        assert!(a.contains("Signature="));
+    }
+
+    #[test]
+    fn utc_date_uses_civil_calendar() {
+        assert_eq!(utc_date(0), "1970-01-01");
+        assert_eq!(utc_date(1_700_000_000), "2023-11-14");
+        assert_eq!(utc_date(1_702_987_200), "2023-12-19");
+    }
+
+    #[test]
+    fn youdao_signs_a_trimmed_query() {
+        assert_eq!(youdao_input("short"), "short");
+        let long_query = "一二三四五六七八九十一二三四五六七八九十一";
+        assert_eq!(
+            youdao_input(long_query),
+            "一二三四五六七八九十21二三四五六七八九十一"
+        );
+    }
+
+    #[test]
+    fn bodies_are_form_encoded() {
+        assert_eq!(url_encode("a b&c=d"), "a%20b%26c%3Dd");
+        assert_eq!(form_encode(&[("q", "你好")]), "q=%E4%BD%A0%E5%A5%BD");
+        assert_eq!(unescape_html("&quot;hi&quot; &amp; &lt;b&gt;"), "\"hi\" & <b>");
+        assert_eq!(host_of("https://tmt.tencentcloudapi.com/"), "tmt.tencentcloudapi.com");
+        assert_eq!(host_of("api.cognitive.microsofttranslator.com"), "api.cognitive.microsofttranslator.com");
     }
 
     #[test]

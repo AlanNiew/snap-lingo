@@ -1,7 +1,15 @@
 /** Shared types — must mirror the Rust structs in `src-tauri/src/config.rs` and `model.rs`. */
 
 export type OcrProvider = "vision" | "winocr";
-export type TranslateProvider = "openai" | "deepl" | "none";
+export type TranslateProvider =
+  | "openai"
+  | "deepl"
+  | "microsoft"
+  | "google"
+  | "youdao"
+  | "baidu"
+  | "tencent"
+  | "none";
 export type DeepLPlan = "free" | "pro";
 
 export interface OcrConfig {
@@ -21,6 +29,10 @@ export interface TranslateConfig {
   provider: TranslateProvider;
   baseUrl: string;
   apiKey: string;
+  /** Second credential: Youdao app secret, Baidu key, Tencent secretKey. */
+  apiSecret: string;
+  /** Azure Translator region / Tencent region. */
+  region: string;
   model: string;
   /** BCP-47-ish target language tag, e.g. "zh-CN", "en", "ja". */
   targetLang: string;
@@ -41,7 +53,8 @@ export interface CaptureConfig {
 
 export interface UiConfig {
   autoCopy: boolean;
-  showOriginal: boolean;
+  /** What the result window shows: both / source only / translation only. */
+  resultView: "both" | "source" | "translation";
   closeOnBlur: boolean;
   resultFontSize: number;
   theme: "system" | "dark" | "light";

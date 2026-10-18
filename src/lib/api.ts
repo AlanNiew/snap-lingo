@@ -17,6 +17,7 @@ import type {
   SelectionRect,
   SessionImage,
   StageEvent,
+  TranslateConfig,
 } from "./types";
 
 export interface MonitorInfo {
@@ -54,8 +55,10 @@ export const api = {
   /* services */
   listModels: (baseUrl: string, apiKey: string) =>
     invoke<string[]>("list_models", { baseUrl, apiKey }),
-  testConnection: (kind: "ocr" | "translate", baseUrl: string, apiKey: string, model: string) =>
-    invoke<ConnectionCheck>("test_connection", { kind, baseUrl, apiKey, model }),
+  testOcrConnection: (baseUrl: string, apiKey: string, model: string) =>
+    invoke<ConnectionCheck>("test_ocr_connection", { baseUrl, apiKey, model }),
+  testTranslateConnection: (config: TranslateConfig) =>
+    invoke<ConnectionCheck>("test_translate_connection", { config }),
   ocrLanguages: () => invoke<OcrLanguage[]>("ocr_languages"),
   ocrProbe: (language: string) => invoke<ConnectionCheck>("ocr_probe", { language }),
 

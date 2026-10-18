@@ -43,10 +43,14 @@ impl Default for OcrConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TranslateConfig {
-    /// `openai` | `deepl` | `none`
+    /// `openai` | `deepl` | `microsoft` | `google` | `youdao` | `baidu` | `tencent` | `none`
     pub provider: String,
     pub base_url: String,
     pub api_key: String,
+    /// Secondary credential: Youdao app secret, Baidu app key, Tencent secretKey.
+    pub api_secret: String,
+    /// Azure Translator region, Tencent region.
+    pub region: String,
     pub model: String,
     pub target_lang: String,
     pub deepl_plan: String,
@@ -59,6 +63,8 @@ impl Default for TranslateConfig {
             provider: "openai".into(),
             base_url: "https://integrate.api.nvidia.com/v1".into(),
             api_key: String::new(),
+            api_secret: String::new(),
+            region: String::new(),
             model: "nvidia/nemotron-3-ultra-550b-a55b".into(),
             target_lang: "zh-CN".into(),
             deepl_plan: "free".into(),
@@ -91,7 +97,8 @@ impl Default for CaptureConfig {
 #[serde(default, rename_all = "camelCase")]
 pub struct UiConfig {
     pub auto_copy: bool,
-    pub show_original: bool,
+    /// `both` | `source` | `translation` — what the result window shows.
+    pub result_view: String,
     pub close_on_blur: bool,
     pub result_font_size: u32,
     pub theme: String,
@@ -102,7 +109,7 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             auto_copy: false,
-            show_original: true,
+            result_view: "both".into(),
             close_on_blur: false,
             result_font_size: 16,
             theme: "system".into(),
@@ -160,7 +167,10 @@ impl AppConfig {
         if self.ocr.provider != "vision" {
             self.ocr.provider = "winocr".into();
         }
-        if !matches!(self.translate.provider.as_str(), "openai" | "deepl" | "none") {
+        if !matches!(
+            self.translate.provider.as_str(),
+            "openai" | "deepl" | "microsoft" | "google" | "youdao" | "baidu" | "tencent" | "none"
+        ) {
             self.translate.provider = "openai".into();
         }
         if self.translate.deepl_plan != "pro" {
@@ -169,11 +179,16 @@ impl AppConfig {
         self.capture.max_image_side = self.capture.max_image_side.clamp(320, 4096);
         self.capture.jpeg_quality = self.capture.jpeg_quality.clamp(40, 100);
         self.ui.result_font_size = self.ui.result_font_size.clamp(11, 32);
+        if !matches!(self.ui.result_view.as_str(), "source" | "translation" | "both") {
+            self.ui.result_view = "both".into();
+        }
         self.history.limit = self.history.limit.clamp(0, 1000);
         if self.ocr.base_url.trim().is_empty() {
             self.ocr.base_url = "https://integrate.api.nvidia.com/v1".into();
         }
-        if self.translate.base_url.trim().is_empty() {
+        // Only the OpenAI-compatible path has a sensible default endpoint: every
+        // other engine knows its own and treats an empty value as "use it".
+        if self.translate.provider == "openai" && self.translate.base_url.trim().is_empty() {
             self.translate.base_url = "https://integrate.api.nvidia.com/v1".into();
         }
         self.ocr.base_url = self.ocr.base_url.trim_end_matches('/').to_string();
@@ -194,13 +209,15 @@ impl AppConfig {
     /// True when the configured pipeline can run end to end without further
     /// setup. Used for onboarding: the settings window opens when this is false.
     pub fn is_ready(&self) -> bool {
-        let tr_ok = match self.translate.provider.as_str() {
+        let tr = &self.translate;
+        let tr_ok = match tr.provider.as_str() {
             "none" => true,
-            "deepl" => !self.translate.api_key.trim().is_empty(),
-            _ => {
-                !self.translate.api_key.trim().is_empty()
-                    && !self.translate.model.trim().is_empty()
+            "deepl" | "microsoft" | "google" => !tr.api_key.trim().is_empty(),
+            // These three sign the request with a second credential.
+            "youdao" | "baidu" | "tencent" => {
+                !tr.api_key.trim().is_empty() && !tr.api_secret.trim().is_empty()
             }
+            _ => !tr.api_key.trim().is_empty() && !tr.model.trim().is_empty(),
         };
         self.is_ocr_ready() && tr_ok
     }
