@@ -1,4 +1,6 @@
-//! Model / API access: OpenAI-compatible chat completions and DeepL.
+//! Model / API access: OpenAI-compatible chat completions, DeepL, the cloud
+//! translation services (Microsoft / Google / Youdao / Baidu / Tencent) and the
+//! one-step picture translation of Youdao, Baidu and Tencent.
 //!
 //! Everything that talks to the network lives here so the pipeline stays a pure
 //! orchestration layer. Requests carry an explicit timeout, retry on the
@@ -8,6 +10,7 @@
 use crate::config::{OcrConfig, TranslateConfig};
 use crate::model::ConnectionCheck;
 use anyhow::{anyhow, bail, Context, Result};
+use base64::Engine as _;
 use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -18,6 +21,21 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_ATTEMPTS: u32 = 3;
 /// Translate in slices of roughly this many characters.
 const CHUNK_CHARS: usize = 2400;
+
+/// An encoded picture on its way to a cloud translator.
+pub struct ImagePayload {
+    /// Raw JPEG bytes — Baidu's signature is computed over the file itself.
+    pub bytes: Vec<u8>,
+    /// The same bytes as base64, without any `data:` prefix.
+    pub base64: String,
+}
+
+impl ImagePayload {
+    pub fn from_jpeg(bytes: Vec<u8>) -> Self {
+        let base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        Self { bytes, base64 }
+    }
+}
 
 #[derive(Clone)]
 pub struct Providers {
@@ -100,12 +118,14 @@ impl Providers {
         // engine's own profile into them so no engine can ever pick up another
         // engine's key, region or endpoint.
         let profile = cfg.active();
+        let tier = profile.tier(&cfg.provider);
         let mut scoped = cfg.clone();
         scoped.base_url = profile.base_url;
         scoped.api_key = profile.api_key;
         scoped.api_secret = profile.api_secret;
         scoped.region = profile.region;
         scoped.model = profile.model;
+        scoped.model_tier = tier;
         let cfg = &scoped;
         match cfg.provider.as_str() {
             "none" => Ok(String::new()),
@@ -117,6 +137,38 @@ impl Providers {
             "tencent" => self.tencent(cfg, text).await,
             _ => self.translate_chat(cfg, text).await,
         }
+    }
+
+    /// One-step picture translation: the cloud service reads the picture itself
+    /// and hands back both the text it saw and the translation, so the local OCR
+    /// engine is bypassed for this capture.
+    ///
+    /// Returns `(source_text, translated_text)`.
+    pub async fn image_translate(
+        &self,
+        cfg: &TranslateConfig,
+        image: &ImagePayload,
+    ) -> Result<(String, String)> {
+        let profile = cfg.active();
+        let tier = profile.tier(&cfg.provider);
+        let mut scoped = cfg.clone();
+        scoped.base_url = profile.base_url;
+        scoped.api_key = profile.api_key;
+        scoped.api_secret = profile.api_secret;
+        scoped.region = profile.region;
+        scoped.model = profile.model;
+        scoped.model_tier = tier;
+        let cfg = &scoped;
+        let (source, translation) = match cfg.provider.as_str() {
+            "youdao" => self.youdao_image(cfg, image).await?,
+            "baidu" => self.baidu_image(cfg, image).await?,
+            "tencent" => self.tencent_image(cfg, image).await?,
+            other => bail!("{other} 不支持一步翻译图片，请改用「先识别、再翻译」模式。"),
+        };
+        if translation.trim().is_empty() {
+            bail!("图片里没有识别到可以翻译的文字。");
+        }
+        Ok((source, translation))
     }
 
     async fn translate_chat(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
@@ -192,6 +244,239 @@ impl Providers {
     }
 
     /* ------------------------------------ dedicated translation services */
+
+    /// Youdao picture translation (`ocrtransapi`): the service reads the picture
+    /// and translates every region it finds, in one call — no local OCR needed.
+    async fn youdao_image(
+        &self,
+        cfg: &TranslateConfig,
+        image: &ImagePayload,
+    ) -> Result<(String, String)> {
+        require_key(&cfg.api_key, "有道智云")?;
+        if cfg.api_secret.trim().is_empty() {
+            bail!("有道智云需要两项凭据：应用 ID 与应用密钥。");
+        }
+        let endpoint = if cfg.base_url.trim().is_empty() {
+            "https://openapi.youdao.com/ocrtransapi".to_string()
+        } else {
+            cfg.base_url.trim().to_string()
+        };
+        let app_key = cfg.api_key.trim().to_string();
+        let key = cfg.api_secret.trim().to_string();
+        let to = youdao_target(&cfg.target_lang);
+        let salt = crate::model::new_id();
+        let curtime = (crate::model::now_ms() / 1000).to_string();
+        let input = youdao_input(&image.base64);
+        let sign = sha256_hex(&format!("{app_key}{input}{salt}{curtime}{key}"));
+        // 1 selects the LLM engine, 0 the general one.
+        let option = if cfg.model_tier.trim() == "llm" {
+            "1"
+        } else {
+            "0"
+        };
+        let body = form_encode(&[
+            ("type", "1"),
+            ("from", "auto"),
+            ("to", to.as_str()),
+            ("appKey", app_key.as_str()),
+            ("salt", salt.as_str()),
+            ("sign", sign.as_str()),
+            ("signType", "v3"),
+            ("curtime", curtime.as_str()),
+            ("q", image.base64.as_str()),
+            ("docType", "json"),
+            ("render", "0"),
+            ("translateOption", option),
+        ]);
+        let resp = self
+            .send_with_retry(
+                || {
+                    self.client
+                        .post(&endpoint)
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .body(body.clone())
+                },
+                "有道图片翻译",
+            )
+            .await?;
+        let parsed: Value =
+            serde_json::from_str(&resp).context("有道图片翻译返回的内容不是 JSON")?;
+        if let Some(code) = parsed.get("errorCode").and_then(|c| c.as_str()) {
+            if code != "0" {
+                bail!("有道图片翻译报错 {code}：{}", youdao_error(code));
+            }
+        }
+        let regions = parsed
+            .get("resRegions")
+            .and_then(|r| r.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let collect = |field: &str| {
+            regions
+                .iter()
+                .filter_map(|region| region.get(field).and_then(|v| v.as_str()))
+                .filter(|line| !line.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        Ok((collect("context"), collect("tranContent")))
+    }
+
+    /// Baidu picture translation (`api/trans/sdk/picture`): a multipart upload
+    /// whose signature covers the md5 of the file bytes themselves.
+    async fn baidu_image(
+        &self,
+        cfg: &TranslateConfig,
+        image: &ImagePayload,
+    ) -> Result<(String, String)> {
+        require_key(&cfg.api_key, "百度翻译")?;
+        if cfg.api_secret.trim().is_empty() {
+            bail!("百度翻译需要两项凭据：APP ID 与密钥。");
+        }
+        let endpoint = if cfg.base_url.trim().is_empty() {
+            "https://fanyi-api.baidu.com/api/trans/sdk/picture".to_string()
+        } else {
+            cfg.base_url.trim().to_string()
+        };
+        let app_id = cfg.api_key.trim().to_string();
+        let key = cfg.api_secret.trim().to_string();
+        let to = baidu_target(&cfg.target_lang);
+        let salt = crate::model::new_id();
+        let cuid = "SnapLingo".to_string();
+        let mac = "SnapLingo".to_string();
+        let file_hash = md5_hex_bytes(&image.bytes);
+        let sign = md5_hex(&format!("{app_id}{file_hash}{salt}{cuid}{mac}{key}"));
+        let resp = self
+            .send_with_retry(
+                || {
+                    // Rebuilt per attempt: a multipart body is consumed by the
+                    // request that sends it.
+                    let form = reqwest::multipart::Form::new()
+                        .part(
+                            "image",
+                            reqwest::multipart::Part::bytes(image.bytes.clone())
+                                .file_name("snapping.jpg"),
+                        )
+                        .text("from", "auto")
+                        .text("to", to.clone())
+                        .text("appid", app_id.clone())
+                        .text("salt", salt.clone())
+                        .text("cuid", cuid.clone())
+                        .text("mac", mac.clone())
+                        .text("version", "3")
+                        .text("paste", "0")
+                        .text("sign", sign.clone());
+                    self.client.post(&endpoint).multipart(form)
+                },
+                "百度图片翻译",
+            )
+            .await?;
+        let parsed: Value =
+            serde_json::from_str(&resp).context("百度图片翻译返回的内容不是 JSON")?;
+        if let Some(error) = parsed.get("error_code") {
+            let code = error
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| error.to_string());
+            if code != "0" {
+                bail!("百度图片翻译报错 {code}：{}", baidu_error(&code));
+            }
+        }
+        let data = parsed.get("data").cloned().unwrap_or(Value::Null);
+        let text_of = |field: &str, fallback: &str| {
+            let direct = data
+                .get(field)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if !direct.trim().is_empty() {
+                return direct;
+            }
+            data.get("content")
+                .and_then(|c| c.as_array())
+                .map(|lines| {
+                    lines
+                        .iter()
+                        .filter_map(|line| line.get(fallback).and_then(|v| v.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default()
+        };
+        Ok((text_of("sumSrc", "src"), text_of("sumDst", "dst")))
+    }
+
+    /// Tencent Cloud end-to-end picture translation (`ImageTranslateLLM`).
+    /// Returns the text inside the picture and its translation.
+    async fn tencent_image(
+        &self,
+        cfg: &TranslateConfig,
+        image: &ImagePayload,
+    ) -> Result<(String, String)> {
+        require_key(&cfg.api_key, "腾讯翻译")?;
+        if cfg.api_secret.trim().is_empty() {
+            bail!("腾讯翻译需要两项凭据：SecretId 与 SecretKey。");
+        }
+        let host = if cfg.base_url.trim().is_empty() {
+            "tmt.tencentcloudapi.com".to_string()
+        } else {
+            host_of(cfg.base_url.trim())
+        };
+        let url = format!("https://{host}/");
+        let region = if cfg.region.trim().is_empty() {
+            "ap-guangzhou".to_string()
+        } else {
+            cfg.region.trim().to_string()
+        };
+        let secret_id = cfg.api_key.trim().to_string();
+        let secret_key = cfg.api_secret.trim().to_string();
+        let target = tencent_target(&cfg.target_lang);
+        let mode = if cfg.model_tier.trim() == "lite" { 1 } else { 0 };
+        let payload = json!({
+            "Data": image.base64,
+            "Target": target,
+            "Mode": mode,
+        })
+        .to_string();
+        let timestamp = crate::model::now_ms() / 1000;
+        let date = utc_date(timestamp);
+        let authorization =
+            tc3_authorization(&secret_id, &secret_key, &host, &payload, timestamp, &date);
+        let resp = self
+            .send_with_retry(
+                || {
+                    self.client
+                        .post(&url)
+                        .header("Authorization", authorization.as_str())
+                        .header("Content-Type", "application/json; charset=utf-8")
+                        .header("X-TC-Action", "ImageTranslateLLM")
+                        .header("X-TC-Version", "2018-03-21")
+                        .header("X-TC-Timestamp", timestamp.to_string())
+                        .header("X-TC-Region", region.as_str())
+                        .body(payload.clone())
+                },
+                "腾讯图片翻译",
+            )
+            .await?;
+        let parsed: Value = serde_json::from_str(&resp).context("腾讯图片翻译返回的不是 JSON")?;
+        let response = parsed.get("Response").cloned().unwrap_or(Value::Null);
+        if let Some(err) = response.get("Error") {
+            let code = err.get("Code").and_then(|c| c.as_str()).unwrap_or("未知错误");
+            let message = err.get("Message").and_then(|m| m.as_str()).unwrap_or("");
+            bail!("腾讯图片翻译报错 {code}：{message}");
+        }
+        let source = response
+            .get("SourceText")
+            .and_then(|t| t.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let translated = response
+            .get("TargetText")
+            .and_then(|t| t.as_str())
+            .unwrap_or_default()
+            .to_string();
+        Ok((source, translated))
+    }
 
     /// Azure AI Translator (Microsoft). A subscription key plus an optional
     /// region — required when the key belongs to a multi-service resource.
@@ -341,11 +626,64 @@ impl Providers {
         Ok(out.join("\n"))
     }
 
+    /// Baidu's LLM translation (`ait/api/aiTextTranslate`): same credentials and
+    /// md5 signature as the standard API, a JSON body instead of a form.
+    async fn baidu_llm(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
+        let endpoint = if cfg.base_url.trim().is_empty() {
+            "https://fanyi-api.baidu.com/ait/api/aiTextTranslate".to_string()
+        } else {
+            cfg.base_url.trim().to_string()
+        };
+        let app_id = cfg.api_key.trim().to_string();
+        let key = cfg.api_secret.trim().to_string();
+        let to = baidu_target(&cfg.target_lang);
+
+        let mut out = Vec::new();
+        for chunk in chunk_text(text, CHUNK_CHARS) {
+            let salt = crate::model::new_id();
+            let sign = md5_hex(&format!("{app_id}{chunk}{salt}{key}"));
+            let body = json!({
+                "appid": app_id,
+                "from": "auto",
+                "to": to,
+                "q": chunk,
+                "salt": salt,
+                "sign": sign,
+            });
+            let resp = self
+                .send_with_retry(
+                    || self.client.post(&endpoint).json(&body),
+                    "百度大模型翻译",
+                )
+                .await?;
+            let parsed: Value =
+                serde_json::from_str(&resp).context("百度大模型翻译返回的内容不是 JSON")?;
+            if let Some(code) = parsed.get("error_code").and_then(|c| c.as_str()) {
+                bail!("百度大模型翻译报错 {code}：{}", baidu_error(code));
+            }
+            let translated = parsed
+                .get("trans_result")
+                .and_then(|t| t.as_array())
+                .map(|arr| join_strings(arr, "dst"))
+                .unwrap_or_default();
+            if translated.trim().is_empty() {
+                bail!("百度大模型翻译返回了空译文。");
+            }
+            out.push(translated);
+        }
+        Ok(out.join("\n"))
+    }
+
     /// Baidu Translate open API. md5 signature over a form body.
     async fn baidu(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
         require_key(&cfg.api_key, "百度翻译")?;
         if cfg.api_secret.trim().is_empty() {
             bail!("百度翻译需要两项凭据：APP ID 与密钥。");
+        }
+        // 「大模型翻译」 is a separate service on its own endpoint; it shares the
+        // app id + md5 signature contract, so only the URL and the body change.
+        if cfg.model_tier.trim() == "llm" {
+            return self.baidu_llm(cfg, text).await;
         }
         let endpoint = if cfg.base_url.trim().is_empty() {
             "https://fanyi-api.baidu.com/api/trans/vip/translate".to_string()
@@ -1073,6 +1411,11 @@ fn sha256_hex(data: &str) -> String {
 
 fn md5_hex(data: &str) -> String {
     format!("{:x}", md5::compute(data.as_bytes()))
+}
+
+/// md5 of raw bytes — Baidu signs the picture file itself, not a string.
+fn md5_hex_bytes(data: &[u8]) -> String {
+    format!("{:x}", md5::compute(data))
 }
 
 fn hmac_sha256(key: &[u8], message: &str) -> Vec<u8> {

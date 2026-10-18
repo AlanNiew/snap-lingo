@@ -48,7 +48,7 @@ impl Default for OcrConfig {
 /// Credentials and endpoint for one translation engine. Every engine keeps its
 /// own copy, which is what stops one service's API key from turning up in
 /// another service's form after switching engines.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TranslateProfile {
     pub base_url: String,
@@ -58,6 +58,33 @@ pub struct TranslateProfile {
     /// Azure Translator region, Tencent region.
     pub region: String,
     pub model: String,
+    /// Youdao / Baidu / Tencent can read the picture themselves: one call does
+    /// OCR *and* translation. Defaults to on for those three engines.
+    #[serde(default = "default_true")]
+    pub image_translate: bool,
+    /// Service tier of the engine: `standard` / `llm` (Baidu, Youdao) or
+    /// `llm` / `lite` (Tencent). Empty means the engine's own default.
+    pub model_tier: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for TranslateProfile {
+    fn default() -> Self {
+        Self {
+            base_url: String::new(),
+            api_key: String::new(),
+            api_secret: String::new(),
+            region: String::new(),
+            model: String::new(),
+            // One-step picture translation is the better default for the three
+            // services that support it: nothing else has to be installed.
+            image_translate: true,
+            model_tier: String::new(),
+        }
+    }
 }
 
 impl TranslateProfile {
@@ -68,6 +95,23 @@ impl TranslateProfile {
             && self.api_secret.trim().is_empty()
             && self.region.trim().is_empty()
             && self.model.trim().is_empty()
+    }
+
+    /// The tier this engine will actually use, with blanks resolved.
+    pub fn tier(&self, provider: &str) -> String {
+        let tier = self.model_tier.trim();
+        if !tier.is_empty() {
+            return tier.to_string();
+        }
+        match provider {
+            // Baidu's standard text translation works for everyone; the LLM
+            // service has to be activated separately.
+            "baidu" => "standard",
+            // Youdao's and Tencent's picture translation are best on the LLM path.
+            "youdao" | "tencent" => "llm",
+            _ => "",
+        }
+        .to_string()
     }
 }
 
@@ -93,6 +137,10 @@ pub struct TranslateConfig {
     pub region: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub model: String,
+    /// Runtime carrier only: the tier of the selected engine, resolved from its
+    /// profile just before a request is made. Never written to disk.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model_tier: String,
 }
 
 impl TranslateConfig {
@@ -109,6 +157,13 @@ impl TranslateConfig {
     /// Settings of the engine that is currently selected.
     pub fn active(&self) -> TranslateProfile {
         self.profile(&self.provider)
+    }
+
+    /// True when the selected engine translates the picture itself, which skips
+    /// the local OCR step completely.
+    pub fn uses_image_translate(&self) -> bool {
+        matches!(self.provider.as_str(), "youdao" | "baidu" | "tencent")
+            && self.active().image_translate
     }
 }
 
@@ -134,6 +189,7 @@ impl Default for TranslateConfig {
             api_secret: String::new(),
             region: String::new(),
             model: String::new(),
+            model_tier: String::new(),
         }
     }
 }
@@ -164,6 +220,8 @@ pub struct UiConfig {
     pub auto_copy: bool,
     /// `both` | `source` | `translation` — what the result window shows.
     pub result_view: String,
+    /// Show the captured picture in the result window.
+    pub result_show_image: bool,
     pub close_on_blur: bool,
     pub result_font_size: u32,
     pub theme: String,
@@ -175,6 +233,7 @@ impl Default for UiConfig {
         Self {
             auto_copy: false,
             result_view: "both".into(),
+            result_show_image: true,
             close_on_blur: false,
             result_font_size: 16,
             theme: "system".into(),
@@ -261,6 +320,8 @@ impl AppConfig {
             api_secret: std::mem::take(&mut self.translate.api_secret),
             region: std::mem::take(&mut self.translate.region),
             model: std::mem::take(&mut self.translate.model),
+            image_translate: true,
+            model_tier: String::new(),
         };
         if !legacy.is_blank() {
             let id = self.translate.provider.clone();
@@ -297,6 +358,11 @@ impl AppConfig {
             p.api_secret = p.api_secret.trim().to_string();
             p.region = p.region.trim().to_string();
             p.model = p.model.trim().to_string();
+            // Unknown tiers fall back to the engine's own default at use time.
+            p.model_tier = match p.model_tier.trim() {
+                "llm" | "lite" | "standard" => p.model_tier.trim().to_string(),
+                _ => String::new(),
+            };
         }
         if self.translate.target_lang.trim().is_empty() {
             self.translate.target_lang = "zh-CN".into();
@@ -307,7 +373,10 @@ impl AppConfig {
     /// engine is usable. A missing translation only fails the translation step,
     /// so it does not block taking the shot.
     pub fn is_ocr_ready(&self) -> bool {
-        self.ocr.provider == "winocr"
+        // A one-step picture translator reads the picture itself, so it works
+        // without any local OCR engine being available.
+        self.translate.uses_image_translate()
+            || self.ocr.provider == "winocr"
             || (!self.ocr.api_key.trim().is_empty() && !self.ocr.model.trim().is_empty())
     }
 
@@ -409,6 +478,43 @@ mod tests {
         assert_eq!(cfg.ui.result_font_size, 11);
         assert_eq!(cfg.history.limit, 1000);
         assert_eq!(cfg.translate.deepl_plan, "free");
+    }
+
+    #[test]
+    fn picture_translation_skips_ocr_requirements() {
+        let mut cfg = AppConfig::default();
+        cfg.ocr.provider = "vision".into();
+        cfg.translate.provider = "youdao".into();
+        cfg.sanitize();
+        // Youdao reads the picture itself, so no local OCR engine is needed.
+        assert!(cfg.translate.uses_image_translate());
+        assert!(cfg.is_ocr_ready());
+
+        cfg.translate.profile_mut("youdao").image_translate = false;
+        assert!(!cfg.translate.uses_image_translate());
+        assert!(!cfg.is_ocr_ready(), "without the picture path the OCR key is required");
+
+        cfg.translate.provider = "openai".into();
+        assert!(!cfg.translate.uses_image_translate());
+    }
+
+    #[test]
+    fn tiers_resolve_to_engine_defaults() {
+        let mut cfg = AppConfig::default();
+        assert_eq!(cfg.translate.active().tier("openai"), "");
+        cfg.translate.provider = "baidu".into();
+        assert_eq!(cfg.translate.active().tier("baidu"), "standard");
+        cfg.translate.provider = "tencent".into();
+        assert_eq!(cfg.translate.active().tier("tencent"), "llm");
+
+        cfg.translate.profile_mut("tencent").model_tier = "lite".into();
+        assert_eq!(cfg.translate.active().tier("tencent"), "lite");
+        cfg.sanitize();
+        assert_eq!(cfg.translate.active().model_tier, "lite");
+
+        cfg.translate.profile_mut("tencent").model_tier = "nonsense".into();
+        cfg.sanitize();
+        assert_eq!(cfg.translate.active().model_tier, "", "unknown tiers are dropped");
     }
 
     #[test]

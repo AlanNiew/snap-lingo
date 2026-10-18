@@ -25,6 +25,10 @@ export interface TranslateEngine {
   /** Official page that issues the credentials. */
   applyUrl: string;
   keyPlaceholder: string;
+  /** The service can read the picture itself: OCR + translation in one call. */
+  imageTranslate?: boolean;
+  /** Service tiers the user may pick between (e.g. Baidu's standard vs LLM). */
+  tiers?: Array<{ value: string; labelKey: StringKey }>;
 }
 
 /**
@@ -72,6 +76,11 @@ export const TRANSLATE_ENGINES: TranslateEngine[] = [
     fields: ["apiKey", "apiSecret"],
     applyUrl: "https://ai.youdao.com/console/#/app-overview",
     keyPlaceholder: "应用 ID",
+    imageTranslate: true,
+    tiers: [
+      { value: "llm", labelKey: "tierLlm" },
+      { value: "standard", labelKey: "tierStandard" },
+    ],
   },
   {
     id: "baidu",
@@ -80,6 +89,11 @@ export const TRANSLATE_ENGINES: TranslateEngine[] = [
     fields: ["apiKey", "apiSecret"],
     applyUrl: "https://fanyi-api.baidu.com/",
     keyPlaceholder: "AppID",
+    imageTranslate: true,
+    tiers: [
+      { value: "standard", labelKey: "tierStandard" },
+      { value: "llm", labelKey: "tierLlm" },
+    ],
   },
   {
     id: "tencent",
@@ -88,6 +102,11 @@ export const TRANSLATE_ENGINES: TranslateEngine[] = [
     fields: ["apiKey", "apiSecret", "region"],
     applyUrl: "https://console.cloud.tencent.com/cam/capi",
     keyPlaceholder: "SecretId",
+    imageTranslate: true,
+    tiers: [
+      { value: "llm", labelKey: "tierLlm" },
+      { value: "lite", labelKey: "tierLite" },
+    ],
   },
   {
     id: "none",

@@ -35,6 +35,10 @@ export interface TranslateProfile {
   /** Azure Translator region / Tencent region. */
   region: string;
   model: string;
+  /** Youdao / Baidu / Tencent can read the picture themselves (one-step OCR + translate). */
+  imageTranslate: boolean;
+  /** Engine tier: "standard" | "llm" (Baidu, Youdao) or "llm" | "lite" (Tencent). */
+  modelTier: string;
 }
 
 /** A blank profile, used while the user is still filling one in. */
@@ -44,6 +48,8 @@ export const EMPTY_PROFILE: TranslateProfile = {
   apiSecret: "",
   region: "",
   model: "",
+  imageTranslate: true,
+  modelTier: "",
 };
 
 export interface TranslateConfig {
@@ -71,6 +77,7 @@ export interface UiConfig {
   autoCopy: boolean;
   /** What the result window shows: both / source only / translation only. */
   resultView: "both" | "source" | "translation";
+  resultShowImage: boolean;
   closeOnBlur: boolean;
   resultFontSize: number;
   theme: "system" | "dark" | "light";

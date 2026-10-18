@@ -39,6 +39,8 @@ export function ResultWindow() {
   const [copied, setCopied] = useState(false);
   /** Temporary override of the configured view, per result window. */
   const [localView, setLocalView] = useState<ResultView | null>(null);
+  /** Temporary override of the configured "show the picture" switch. */
+  const [localShot, setLocalShot] = useState<boolean | null>(null);
   /** Click the picture to inspect it full size. */
   const [zoom, setZoom] = useState(false);
 
@@ -114,7 +116,7 @@ export function ResultWindow() {
     // reading seen twice in a row is trusted, only a 4px+ change is worth a
     // resize, and there is a hard cap per result so a pathological layout can
     // never spin the main thread.
-    const MAX_FITS = 12;
+    const MAX_FITS = 16;
     let lastSent = -1;
     let stable: string | null = null;
     let sent = 0;
@@ -133,11 +135,11 @@ export function ResultWindow() {
       if (!el) return;
       const head = el.querySelector<HTMLElement>(".result-head");
       const body = el.querySelector<HTMLElement>(".result-body");
-      const foot = el.querySelector<HTMLElement>(".result-foot");
-      // `scrollHeight` includes the body's own padding, so this is exactly the
-      // height the content wants at the current width.
-      const total =
-        (head?.offsetHeight ?? 0) + (body?.scrollHeight ?? 0) + (foot?.offsetHeight ?? 0) + 2;
+      // `scrollHeight` includes the body's own padding *and* the sticky footer,
+      // so this is exactly the height the content wants at the current width.
+      // The extra few pixels are slack for rounding: being one pixel short is
+      // what used to shave the bottom button row.
+      const total = (head?.offsetHeight ?? 0) + (body?.scrollHeight ?? 0) + 4;
       if (total < 80) return;
 
       const key = String(total);
@@ -236,7 +238,9 @@ export function ResultWindow() {
       ? tt("ocrWin")
       : payload?.ocrProvider === "vision"
         ? tt("ocrVision")
-        : (payload?.ocrProvider ?? "");
+        : payload?.ocrProvider === "image"
+          ? tt("badgeImageTranslate")
+          : (payload?.ocrProvider ?? "");
   const providerLabel =
     payload && payload.translateProvider !== "none"
       ? tt(PROVIDER_KEYS[payload.translateProvider as TranslateProvider] ?? "translateOpenai")
@@ -249,7 +253,8 @@ export function ResultWindow() {
   ];
   // The picture is there to check the translation against the original, so it
   // is pointless in source-only mode (the original text *is* the content then).
-  const showShot = Boolean(payload?.preview) && view !== "source";
+  const shotOpen = localShot ?? config?.ui.resultShowImage ?? true;
+  const showShot = Boolean(payload?.preview) && view !== "source" && shotOpen;
 
   return (
     <div className="result" ref={root}>
@@ -293,81 +298,91 @@ export function ResultWindow() {
         ) : null}
 
         {done ? (
-          <div className="result-columns">
+          <>
             {showShot ? (
               <figure className="result-shot" data-zoom={zoom} onClick={() => setZoom((was) => !was)}>
                 <img src={payload?.preview ?? undefined} alt="" />
               </figure>
             ) : null}
 
-            <div className="result-text-col">
-              {view !== "source" ? (
-                <section className="result-pane">
-                  {view === "both" ? <div className="result-pane-label">{tt("viewTranslation")}</div> : null}
-                  <div className="result-text" style={{ fontSize }}>
-                    {targetText ? targetText : <span className="result-placeholder">{tt("noTranslation")}</span>}
-                  </div>
-                </section>
-              ) : null}
+            {view !== "source" ? (
+              <section className="result-pane">
+                {view === "both" ? <div className="result-pane-label">{tt("viewTranslation")}</div> : null}
+                <div className="result-text" style={{ fontSize }}>
+                  {targetText ? targetText : <span className="result-placeholder">{tt("noTranslation")}</span>}
+                </div>
+              </section>
+            ) : null}
 
-              {view === "both" && sourceText ? <div className="result-divider" /> : null}
+            {view === "both" && sourceText ? <div className="result-divider" /> : null}
 
-              {view !== "translation" ? (
-                <section className="result-pane">
-                  {view === "both" ? <div className="result-pane-label">{tt("viewSource")}</div> : null}
-                  <div className="result-src-text" style={view === "source" ? { fontSize } : undefined}>
-                    {sourceText ? sourceText : <span className="result-placeholder">{tt("empty")}</span>}
-                  </div>
-                </section>
-              ) : null}
+            {view !== "translation" ? (
+              <section className="result-pane">
+                {view === "both" ? <div className="result-pane-label">{tt("viewSource")}</div> : null}
+                <div className="result-src-text" style={view === "source" ? { fontSize } : undefined}>
+                  {sourceText ? sourceText : <span className="result-placeholder">{tt("empty")}</span>}
+                </div>
+              </section>
+            ) : null}
 
-              <div className="result-meta">
-                {ocrLabel ? <span className="badge">{ocrLabel}</span> : null}
-                {providerLabel ? <span className="badge badge-accent">{providerLabel}</span> : null}
-                {payload?.model ? <span className="badge">{payload.model}</span> : null}
-              </div>
+            <div className="result-meta">
+              {ocrLabel ? <span className="badge">{ocrLabel}</span> : null}
+              {providerLabel ? <span className="badge badge-accent">{providerLabel}</span> : null}
+              {payload?.model ? <span className="badge">{payload.model}</span> : null}
             </div>
-          </div>
+          </>
         ) : null}
+
+        <footer className="result-foot">
+          {payload && !payload.error ? (
+            <div className="result-view" role="group" aria-label={tt("resultView")}>
+              {viewOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  disabled={busy}
+                  data-active={view === option.id}
+                  onClick={() => setLocalView(option.id)}
+                >
+                  {tt(option.key)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <span className="spacer" />
+
+          {payload?.preview ? (
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              data-active={shotOpen && view !== "source"}
+              title={tt("resultShotToggle")}
+              onClick={() => setLocalShot(!shotOpen)}
+            >
+              {tt("resultShot")}
+            </button>
+          ) : null}
+
+          {canRetry ? (
+            <button
+              className="btn btn-sm"
+              disabled={busy}
+              onClick={() => void api.retryTranslation().catch(() => undefined)}
+            >
+              {tt("retryTranslate")}
+            </button>
+          ) : null}
+          {done ? (
+            <button className="btn btn-primary btn-sm" onClick={copy}>
+              {copied ? tt("copied") : tt("copy")}
+            </button>
+          ) : null}
+          <button className="btn btn-sm btn-ghost" onClick={() => void api.hideResult()}>
+            {tt("close")}
+          </button>
+        </footer>
       </div>
-
-      <footer className="result-foot">
-        {payload && !payload.error ? (
-          <div className="result-view" role="group" aria-label={tt("resultView")}>
-            {viewOptions.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                disabled={busy}
-                data-active={view === option.id}
-                onClick={() => setLocalView(option.id)}
-              >
-                {tt(option.key)}
-              </button>
-            ))}
-          </div>
-        ) : null}
-
-        <span className="spacer" />
-
-        {canRetry ? (
-          <button
-            className="btn btn-sm"
-            disabled={busy}
-            onClick={() => void api.retryTranslation().catch(() => undefined)}
-          >
-            {tt("retryTranslate")}
-          </button>
-        ) : null}
-        {done ? (
-          <button className="btn btn-primary btn-sm" onClick={copy}>
-            {copied ? tt("copied") : tt("copy")}
-          </button>
-        ) : null}
-        <button className="btn btn-sm btn-ghost" onClick={() => void api.hideResult()}>
-          {tt("close")}
-        </button>
-      </footer>
     </div>
   );
 }

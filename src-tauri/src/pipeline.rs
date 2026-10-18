@@ -14,7 +14,7 @@ use crate::config::AppConfig;
 use crate::imageops;
 use crate::model::{new_id, now_ms, ResultPayload, SelectionRect, Stage, StageEvent};
 use crate::ocr_win;
-use crate::providers::Providers;
+use crate::providers::{ImagePayload, Providers};
 use crate::state::{lock, AppState, CaptureSession, SessionEntry};
 use crate::windows;
 use anyhow::{anyhow, bail, Result};
@@ -48,6 +48,13 @@ const VISION_TIMEOUT: Duration = Duration::from_secs(120);
 const TRANSLATE_TIMEOUT: Duration = Duration::from_secs(120);
 const JOB_TIMEOUT: Duration = Duration::from_secs(150);
 
+/// One-step picture translation is a single upload, so it gets its own ceiling.
+const IMAGE_TRANSLATE_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Youdao refuses pictures over 5 MB once base64 encoded, Baidu over 4 MB raw.
+/// Anything above this is re-encoded smaller before it is uploaded.
+const MAX_PICTURE_BYTES: usize = 3_500_000;
+
 fn emit_stage(app: &AppHandle, stage: Stage, message: Option<&str>, elapsed_ms: u64) {
     let event = StageEvent {
         stage,
@@ -79,7 +86,7 @@ pub async fn begin_capture(app: AppHandle) {
     if !cfg.is_ocr_ready() {
         fail(
             &app,
-            "还没有可用的 OCR。请在设置里把 OCR 切换为「Windows 离线 OCR」（离线、免费），或填写视觉模型接口的地址、密钥和模型。",
+            "还没有可用的识别方式。请在设置里把 OCR 切换为「Windows 离线 OCR」（离线、免费），填写视觉模型接口的地址、密钥和模型，或把翻译渠道换成支持「一步图片翻译」的有道 / 百度 / 腾讯。",
         );
         return;
     }
@@ -325,8 +332,40 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
     let cfg = app.state::<AppState>().config();
     let providers = app.state::<AppState>().providers.clone();
     let preview = imageops::to_preview_data_url(&crop).ok();
-
     let (ocr_provider, model) = provider_labels(&cfg);
+
+    // One-step picture translation: Youdao / Baidu / Tencent read the picture
+    // themselves, so the local OCR engine is skipped for this capture.
+    if cfg.translate.uses_image_translate() {
+        emit_stage(
+            &app,
+            Stage::Ocr,
+            Some("正在识别并翻译图片…"),
+            started.elapsed().as_millis() as u64,
+        );
+        let job = match picture_translate(&cfg, &providers, &crop).await {
+            Ok((source, translation)) => Job {
+                source: Some(source),
+                translation: Some(translation),
+                ocr_provider: "image".into(),
+                model: String::new(),
+                error: None,
+            },
+            Err(err) => Job {
+                source: None,
+                translation: None,
+                ocr_provider: "image".into(),
+                model: String::new(),
+                error: Some(format!("{err:#}")),
+            },
+        };
+        if let Some(source) = job.source.clone() {
+            *lock(&app.state::<AppState>().last_source) = Some(source);
+        }
+        *lock(&app.state::<AppState>().last_crop) = Some(crop);
+        publish(&app, &cfg, job, preview, started.elapsed());
+        return;
+    }
 
     match recognize(&app, &cfg, &providers, &crop).await {
         Ok((source, inline_translation)) => {
@@ -372,6 +411,52 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
             );
         }
     }
+}
+
+/// One-step picture translation: encode the crop and let the selected cloud
+/// engine read it and translate it in a single call.
+async fn picture_translate(
+    cfg: &AppConfig,
+    providers: &Providers,
+    crop: &RgbaImage,
+) -> Result<(String, String)> {
+    let payload = ImagePayload::from_jpeg(encode_picture(crop, cfg.capture.jpeg_quality)?);
+    match tokio::time::timeout(
+        IMAGE_TRANSLATE_TIMEOUT,
+        providers.image_translate(&cfg.translate, &payload),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => bail!(
+            "图片翻译超过 {} 秒没有响应。请点「重试」，或换一个翻译渠道。",
+            IMAGE_TRANSLATE_TIMEOUT.as_secs()
+        ),
+    }
+}
+
+/// JPEG bytes of the crop, shrunk until they fit what the cloud services accept.
+fn encode_picture(crop: &RgbaImage, quality: u8) -> Result<Vec<u8>> {
+    let mut picture = crop.clone();
+    let mut quality = quality.clamp(40, 100);
+    let mut bytes = imageops::to_jpeg_bytes(&picture, quality)?;
+    for _ in 0..3 {
+        if bytes.len() <= MAX_PICTURE_BYTES {
+            return Ok(bytes);
+        }
+        quality = quality.saturating_sub(12).max(45);
+        if picture.width().max(picture.height()) > 2000 {
+            picture = imageops::scale_to_long_edge(&picture, 2000);
+        }
+        bytes = imageops::to_jpeg_bytes(&picture, quality)?;
+    }
+    if bytes.len() > MAX_PICTURE_BYTES {
+        bail!(
+            "这一块区域太大（约 {} MB），图片翻译接口会拒绝。请框选更小的区域。",
+            bytes.len() / 1_048_576
+        );
+    }
+    Ok(bytes)
 }
 
 /// OCR, either off the network (vision model) or locally (Windows OCR).

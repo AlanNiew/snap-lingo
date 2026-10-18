@@ -981,26 +981,17 @@ body.result-body {
   /* Reserve the scrollbar track unconditionally: when it appears mid-resize the
      text re-wraps, which used to feed the auto-fit loop and could hang the app. */
   scrollbar-gutter: stable;
-  padding: 14px 14px 8px;
+  /* No bottom padding: the footer bleeds to the edges. */
+  padding: 14px 14px 0;
 }
 
-/* Picture on the left, text on the right: reading them side by side is the
-   whole point of the window. Falls back to a single column when narrow. */
-.result-columns {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.result-text-col {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
+/* The captured picture sits above the text as a full-width strip, capped so a
+   tall crop can never crowd out the translation. Click to read it full size. */
 .result-shot {
-  flex: 0 0 auto;
-  margin: 0;
-  width: clamp(180px, 42%, 420px);
+  display: block;
+  margin: 0 0 14px;
+  width: 100%;
+  max-height: 190px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -1011,7 +1002,9 @@ body.result-body {
 .result-shot img {
   display: block;
   width: 100%;
-  height: auto;
+  max-height: 188px;
+  object-fit: contain;
+  object-position: left top;
 }
 
 /* Click the picture to read it at full size (crop out the small window). */
@@ -1034,16 +1027,6 @@ body.result-body {
   max-width: 94vw;
   max-height: 92vh;
   border-radius: var(--radius-sm);
-}
-
-@media (max-width: 560px) {
-  .result-columns {
-    flex-direction: column;
-  }
-
-  .result-shot {
-    width: 100%;
-  }
 }
 
 .result-text {
@@ -1086,13 +1069,21 @@ body.result-body {
   padding-left: 10px;
 }
 
+/* The button row lives *inside* the scrolling body and sticks to its bottom
+   edge. That is belt and braces: even if the window is ever shorter than the
+   content, the footer stays glued to the bottom instead of being pushed out of
+   the window by the text above it. */
 .result-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
   display: flex;
   align-items: center;
-  flex: 0 0 auto;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 9px 12px;
+  /* Bleed to the window edges: the body is padded, the footer is not. */
+  margin: 14px -14px 0;
+  padding: 9px 12px 10px;
   border-top: 1px solid var(--border);
   background: var(--surface-2);
 }

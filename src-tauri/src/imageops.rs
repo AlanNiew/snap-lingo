@@ -69,12 +69,20 @@ pub fn to_png_data_url(img: &RgbaImage) -> anyhow::Result<String> {
 
 /// JPEG data URL, for previews and for pathological PNG sizes.
 pub fn to_jpeg_data_url(img: &RgbaImage, quality: u8) -> anyhow::Result<String> {
+    Ok(format!(
+        "data:image/jpeg;base64,{}",
+        B64.encode(to_jpeg_bytes(img, quality)?)
+    ))
+}
+
+/// Raw JPEG bytes — what the one-step picture translators want to receive.
+pub fn to_jpeg_bytes(img: &RgbaImage, quality: u8) -> anyhow::Result<Vec<u8>> {
     let (w, h) = img.dimensions();
     let rgb = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();
     let mut buf = Vec::with_capacity((w * h) as usize / 4 + 1024);
     JpegEncoder::new_with_quality(&mut buf, quality)
         .write_image(rgb.as_raw(), w, h, ExtendedColorType::Rgb8)?;
-    Ok(format!("data:image/jpeg;base64,{}", B64.encode(&buf)))
+    Ok(buf)
 }
 
 /// Encoder chosen for the OCR request: PNG when it stays reasonable, else JPEG.

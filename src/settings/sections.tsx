@@ -292,6 +292,13 @@ function EndpointFields({
   );
 }
 
+/** True when the selected translator reads the picture itself, skipping OCR. */
+function usesPictureTranslate(config: AppConfig): boolean {
+  const provider = config.translate.provider;
+  if (provider !== "youdao" && provider !== "baidu" && provider !== "tencent") return false;
+  return config.translate.profiles?.[provider]?.imageTranslate ?? true;
+}
+
 export function OcrSection({ config, patch, notify, languages }: Base & { languages: OcrLanguage[] }) {
   const { t } = useT();
   const [probe, setProbe] = useState<ConnectionCheck | null>(null);
@@ -316,6 +323,10 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
     <>
       <h1 className="page-title">{t("tabOcr")}</h1>
       <p className="page-lead">{t("ocrEngineTitle")}</p>
+
+      {usesPictureTranslate(config) ? (
+        <Row title={t("badgeImageTranslate")} hint={t("ocrBypassedNote")} />
+      ) : null}
 
       <Card title={t("channel")}>
         <Row
@@ -618,6 +629,26 @@ export function TranslateSection({ config, patch, notify }: Base) {
                 />
               </Field>
             ) : null}
+            {meta.imageTranslate ? (
+              <Row title={t("imageTranslate")} hint={t("imageTranslateHint")}>
+                <Switch
+                  checked={profile.imageTranslate}
+                  onChange={(next) => setProfile({ imageTranslate: next }, true)}
+                />
+              </Row>
+            ) : null}
+            {meta.tiers ? (
+              <Field label={t("tierTitle")} hint={t("tierHint")}>
+                <Select
+                  value={profile.modelTier || meta.tiers[0].value}
+                  onChange={(value) => setProfile({ modelTier: value }, true)}
+                  options={meta.tiers.map((tier) => ({
+                    value: tier.value,
+                    label: t(tier.labelKey),
+                  }))}
+                />
+              </Field>
+            ) : null}
             <TranslateTest config={config} />
           </div>
         </Card>
@@ -752,6 +783,12 @@ export function AppearanceSection({ config, patch }: Base) {
               { value: "source", label: t("resultViewSource") },
               { value: "translation", label: t("resultViewTranslation") },
             ]}
+          />
+        </Row>
+        <Row title={t("resultShowImage")} hint={t("resultShowImageHint")}>
+          <Switch
+            checked={config.ui.resultShowImage}
+            onChange={(next) => setUi({ resultShowImage: next }, true)}
           />
         </Row>
         <Row title={t("autoCopy")} hint={t("autoCopyHint")}>

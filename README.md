@@ -17,8 +17,9 @@ SnapLingo 是一个 Windows 桌面小工具，常驻托盘，**启动快、内�
 | 拖拽即识别 | 松开鼠标即开始识别；`Esc` 或右键取消；选区小于 4px 自动忽略；**再按一次快捷键**或托盘「取消本次截图」同样能取消 |
 | 出错处理 | 任何失败都会**弹出结果窗口并同时发一条系统通知**说明原因，结果窗口内置「重试」；网络请求失败自动重试 3 次，绝不静默失败 |
 | 防卡死 | 每个耗时步骤都有硬超时（截图 15s、识别 30s、翻译 120s、整体 150s）；框选 3 分钟未确认自动取消；若真的卡住（连续 4 分钟无响应）程序会自行退出，**绝不会让选区窗口把桌面锁死** |
-| OCR | ① Windows 内置 OCR（`Windows.Media.Ocr`，离线、免费）② 视觉大模型（OpenAI 兼容 `/chat/completions`，图片以 base64 传入） |
+| OCR | ① Windows 内置 OCR（`Windows.Media.Ocr`，离线、免费）② 视觉大模型（OpenAI 兼容 `/chat/completions`，图片以 base64 传入）③ **一步图片翻译**时由云渠道直接读图，无需本机 OCR |
 | 翻译 | ① OpenAI 兼容接口（内置 22 家预设：NVIDIA NIM、智谱、DeepSeek、OpenCode Zen、百度千帆、腾讯混元、讯飞星火、Gemini、Groq、Mistral、xAI、Together、DeepInfra、Cerebras、Fireworks…）② DeepL（Free / Pro）③ 微软翻译（Azure）④ 谷歌翻译 ⑤ 有道智云 ⑥ 百度翻译 ⑦ 腾讯云翻译（TMT）⑧ 关闭（只 OCR 不翻译） |
+| 一步图片翻译 | 有道 / 百度 / 腾讯支持「递交图片、一次拿回原文 + 译文」，无需本机 OCR，识别与排版还原更好；可在各家设置卡片里开关 |
 | 结果窗口 | 无边框置顶卡片，自动按内容调整高度；底部一排「原文 / 译文 / 对照」三态切换，随时只看一边或对照查看；复制、重新翻译、`Esc` 关闭、失焦自动关闭（可关） |
 | 历史记录 | 本地保存最近 N 条识别结果，可搜索查看、单条删除或清空 |
 | 其它 | 开机自启、深浅色主题、中/英文界面、结果字号、自动复制、自定义 Prompt、API Key 一键探测/模型列表拉取 |
@@ -65,11 +66,12 @@ npm run tauri build
 2. 右键托盘图标 → **设置**，至少配置一项：
    - **OCR 引擎**在「OCR」页用下拉列表选：`Windows 内置 OCR`（离线免费，无需 Key）或 `视觉大模型`（选它时才需要接口地址 / Key / 模型，预设也是下拉列表，并给出官方申请地址）。
    - **翻译渠道**在「翻译」页用下拉列表选：OpenAI 兼容、DeepL、微软、谷歌、有道、百度、腾讯，或「仅识别不翻译」。选中一个渠道后只显示它需要的输入框，并给出官方申请地址；每个渠道的 Key 各存各的，互不串用。
+   - **有道 / 百度 / 腾讯**默认开启 **「一步图片翻译」**：截图直接交给它们识别并翻译，不需要本机 OCR；关掉它则回到「本机 OCR → 文本翻译」。百度还能在 **通用文本翻译 / 大模型翻译** 之间选，腾讯可选 **大模型版 / 极速版**。
    - 只想离线使用：`OCR = Windows 内置 OCR`，`翻译 = 仅识别不翻译`。
    - 想一条请求搞定：`OCR = 视觉大模型`，填好 OpenAI 兼容的地址/Key/模型；若开启 **一次调用**，则同一次请求同时返回原文与译文。
 3. 用 `Ctrl + Alt + Z`、或托盘菜单「截图翻译」、或托盘图标左键单击触发截图。
 4. 拖拽框选文字区域，松开鼠标开始识别；`Esc` / 右键取消，再按一次快捷键也能取消。
-5. 结果窗口出现后可：用底部「原文 / 译文 / 对照」切换要看的版本、复制、重新翻译、`Esc` 关闭；**截图图片显示在译文左侧**便于逐句比对，点一下图片可放大到整窗查看。识别或翻译失败时，窗口会显示原因和「重试」按钮（重试会复用上一次的截图，不必重新框选）。
+5. 结果窗口出现后可：用底部「原文 / 译文 / 对照」切换要看的版本、复制、重新翻译、`Esc` 关闭；**截图图片显示在译文的上一行（整宽条带）**便于逐句比对，点一下图片可放大到整窗查看，也可以用底部的「截图」按钮把图片收起来。识别或翻译失败时，窗口会显示原因和「重试」按钮（重试会复用上一次的截图，不必重新框选）。
 6. 托盘菜单里的「取消本次截图」和「退出 SnapLingo」在**任何时刻**都可用；退出时若 2.5 秒内没有正常结束，进程会被强制结束，不会留下关不掉的窗口。
 
 ---
@@ -101,9 +103,9 @@ npm run tauri build
         "model": "nvidia/nemotron-3-ultra-550b-a55b"
       },
       "deepl":   { "baseUrl": "", "apiKey": "", "apiSecret": "", "region": "", "model": "" },
-      "youdao":  { "apiKey": "", "apiSecret": "" },   // 应用 ID + 应用密钥
-      "baidu":   { "apiKey": "", "apiSecret": "" },   // AppID + 密钥
-      "tencent": { "apiKey": "", "apiSecret": "", "region": "" }  // SecretId + SecretKey + 区域（可选）
+      "youdao":  { "apiKey": "", "apiSecret": "", "imageTranslate": true },
+      "baidu":   { "apiKey": "", "apiSecret": "", "imageTranslate": true, "modelTier": "standard" }, // standard | llm
+      "tencent": { "apiKey": "", "apiSecret": "", "region": "", "imageTranslate": true, "modelTier": "llm" } // llm | lite
     },
     "targetLang": "zh-CN",
     "deeplPlan": "free",             // free | pro
@@ -119,6 +121,7 @@ npm run tauri build
     "autoCopy": false,               // 出结果自动复制译文
     "closeOnBlur": false,            // 点别处自动关闭结果窗口
     "resultView": "both",            // both | source | translation（结果窗口默认显示什么）
+    "resultShowImage": true,         // 结果窗口显示截图（可随时用底部「截图」按钮切换）
     "resultFontSize": 16,
     "theme": "system",               // system | light | dark
     "language": "zh"                 // zh | en
@@ -137,9 +140,30 @@ npm run tauri build
 | DeepL | API Key、账号类型 | deepl.com（账号 → API 密钥） | Free 密钥以 `:fx` 结尾 |
 | 微软翻译（Azure） | API Key、区域 | portal.azure.com（创建「文本翻译」资源） | 区域例如 `eastasia`；每月有免费额度 |
 | 谷歌翻译 | API Key | console.cloud.google.com（API 凭证） | Google Cloud Translation v2，密钥作为 URL 参数发送，建议在控制台限制该密钥 |
-| 有道智云 | 应用 ID、应用密钥 | ai.youdao.com（控制台 → 应用总览） | 文本翻译 v3，签名走 `sha256` |
-| 百度翻译 | AppID、密钥 | fanyi-api.baidu.com | 通用文本翻译，签名走 `md5` |
-| 腾讯云翻译 | SecretId、SecretKey、区域（可选） | console.cloud.tencent.com（访问管理 → API 密钥） | 机器翻译 TMT，签名走 TC3-HMAC-SHA256，每月 500 万字符免费 |
+| 有道智云 | 应用 ID、应用密钥 | ai.youdao.com（控制台 → 应用总览） | 文本翻译 v3，签名走 `sha256`；**支持一步图片翻译** |
+| 百度翻译 | AppID、密钥 | fanyi-api.baidu.com | 签名走 `md5`；**支持一步图片翻译**，可选通用文本 / 大模型 |
+| 腾讯云翻译 | SecretId、SecretKey、区域（可选） | console.cloud.tencent.com（访问管理 → API 密钥） | 机器翻译 TMT，签名走 TC3-HMAC-SHA256，每月 500 万字符免费；**支持一步图片翻译** |
+
+### 一步图片翻译（不做本地 OCR）
+
+有道、百度、腾讯三家除了文本翻译接口，还提供「直接递交图片、一次拿回原文 + 译文」的接口。这三家的设置卡片里各有一个 **「一步图片翻译」** 开关，默认开启：
+
+- 开启后，截图会**直接交给该服务商识别并翻译**，用不到本机的 OCR（Windows 内置 OCR / 视觉大模型），速度更快、排版还原更好；
+- 此时设置页的 OCR 区块会显示「本次识别交由翻译渠道完成，无需本机 OCR」的提示，截图也不会再被 OCR 条件拦住；
+- 关闭该开关即回到「先本机 OCR → 再文本翻译」的老链路（识别结果可进历史记录、可切换渠道重新翻译）。
+
+**百度翻译的「通用 / 大模型」档位**：百度有两条文本翻译通道，两条接口不同、需要在控制台各自开通。设置里可选：
+
+| 档位 | 接口 | 说明 |
+| --- | --- | --- |
+| 通用文本翻译（默认） | `api/trans/vip/translate` | 兼容性最好的老接口，标准版 QPS 1、高级版 QPS 10，超出报 54003 |
+| 大模型翻译 | `ait/api/aiTextTranslate` | 术语与语气更自然，需在控制台开通「大模型翻译」 |
+
+腾讯云也提供两档：**大模型版翻译（默认，更准）** 与 **极速版（更快）**。有道则用同一套图片接口的 `translateOption` 参数区分（大模型结果 / 普通结果）。
+
+> 腾讯云图片翻译的免费额度与文本翻译共用；有道图片翻译按调用次数计费（3600 次/小时上限）；百度图片翻译的免费额度以控制台为准。
+
+其他说明：图片递交前会**自动压到 3.5MB 以内**（先降质量再缩边），超过服务商限制会给出明确提示；返回的原文与译文会一并写入历史记录。
 
 每个渠道的 Key / 区域**各存各的**（存在各自 `profiles` 条目里）：从 OpenRouter 换到微软翻译再换回来，两边的密钥都还在，也绝不会把 A 家的 Key 显示到 B 家的输入框里。旧版配置里扁平的 `translate.apiKey` 等字段会在首次启动时自动迁入对应渠道，不会丢失。
 
