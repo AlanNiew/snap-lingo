@@ -26,8 +26,10 @@ const TOAST_MARGIN: i32 = 24;
 
 /// The overlay preview is capped so a 4K frame does not become a ~20 MB IPC
 /// payload. Selection accuracy is unaffected: the user's rectangle is mapped
-/// back onto the full-resolution frame before it is cropped.
-pub const PREVIEW_LONG_EDGE: u32 = 2560;
+/// back onto the full-resolution frame before it is cropped, so this number
+/// only decides how sharp the frozen backdrop is — and how long the hotkey
+/// takes (encode, transfer and webview decode all scale with it).
+pub const PREVIEW_LONG_EDGE: u32 = 1600;
 
 pub fn overlay_label(monitor_id: u32) -> String {
     format!("{OVERLAY_PREFIX}{monitor_id}")
@@ -333,10 +335,18 @@ pub fn hide_overlays(app: &AppHandle) {
 }
 
 /// Hide our own windows so they cannot end up inside the screenshot.
-pub fn hide_transient(app: &AppHandle) {
+/// Hide the windows that must never appear inside a shot. Returns whether
+/// anything was actually visible — the caller then knows if it has to wait for
+/// the compositor before reading the screen.
+pub fn hide_transient(app: &AppHandle) -> bool {
+    let mut hid = false;
     for label in [SETTINGS, RESULT, TOAST] {
         if let Some(window) = app.get_webview_window(label) {
+            if matches!(window.is_visible(), Ok(true)) {
+                hid = true;
+            }
             let _ = window.hide();
         }
     }
+    hid
 }

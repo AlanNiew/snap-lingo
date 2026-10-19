@@ -213,7 +213,23 @@ pub fn run() {
             pipeline::spawn_delayed(
                 handle.clone(),
                 std::time::Duration::from_millis(1500),
-                |app| windows::prewarm_overlay(&app),
+                |app| {
+                    windows::prewarm_overlay(&app);
+                    // Warm the capture path too: creating the first graphics
+                    // session costs a few hundred milliseconds, and paying it
+                    // here means the first hotkey press feels like every other.
+                    std::thread::spawn(|| {
+                        let started = std::time::Instant::now();
+                        match crate::capture::capture(false) {
+                            Ok(frames) => log::info!(
+                                "抓屏预热完成：{} 个显示器，用时 {} ms",
+                                frames.len(),
+                                started.elapsed().as_millis()
+                            ),
+                            Err(err) => log::warn!("抓屏预热失败: {err:#}"),
+                        }
+                    });
+                },
             );
 
             match hotkey::apply(&handle, &shortcut) {
