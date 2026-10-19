@@ -82,6 +82,7 @@ export interface UiConfig {
   /** What the result window shows: both / source only / translation only. */
   resultView: "both" | "source" | "translation";
   resultShowImage: boolean;
+  autoFit: boolean;
   notify: boolean;
   closeOnBlur: boolean;
   resultFontSize: number;

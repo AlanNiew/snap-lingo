@@ -892,6 +892,9 @@ export function AppearanceSection({ config, patch }: Base) {
         <Row title={t("notifyCard")} hint={t("notifyCardHint")}>
           <Switch checked={config.ui.notify} onChange={(next) => setUi({ notify: next }, true)} />
         </Row>
+        <Row title={t("autoFit")} hint={t("autoFitHint")}>
+          <Switch checked={config.ui.autoFit} onChange={(next) => setUi({ autoFit: next }, true)} />
+        </Row>
         <Row title={t("closeOnBlur")} hint={t("closeOnBlurHint")}>
           <Switch checked={config.ui.closeOnBlur} onChange={(next) => setUi({ closeOnBlur: next }, true)} />
         </Row>

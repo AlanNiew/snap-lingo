@@ -110,12 +110,71 @@ export function ResultWindow() {
     return () => query.removeEventListener("change", apply);
   }, [config?.ui.theme]);
 
-  /* ------------------------------------------------------- window placement */
+  /* ------------------------------------------------ optional fit-to-content */
 
-  // The window is centred and sized to ~50% of the screen by the Rust side on
-  // every show (`windows::place_result`). Nothing here measures content to
-  // resize the window: a window that resizes itself while you drag its corner
-  // fights your mouse, which is exactly the jitter we used to have.
+  // Off by default: the window is centred and sized by Rust. When the user asks
+  // for it, grow/shrink the height to the content — but only on real content
+  // changes, only when a reading repeats, and never more than a handful of times
+  // per result, so the window can't flap or fight a manual drag.
+  useEffect(() => {
+    const working = stage !== null && BUSY.includes(stage.stage);
+    if (!config?.ui.autoFit || !payload || working) return;
+    const node = root.current;
+    if (!node) return;
+
+    const MAX_FITS = 6;
+    let lastSent = -1;
+    let stable: number | null = null;
+    let sent = 0;
+    let raf = 0;
+    let stopped = false;
+
+    function schedule() {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    }
+
+    function measure() {
+      raf = 0;
+      if (stopped) return;
+      const el = root.current;
+      if (!el) return;
+      const head = el.querySelector<HTMLElement>(".result-head");
+      const body = el.querySelector<HTMLElement>(".result-body");
+      const content = el.querySelector<HTMLElement>(".result-content");
+      const foot = el.querySelector<HTMLElement>(".result-foot");
+      // Measure the content box, never the scroll container (its scrollHeight is
+      // clamped to the current window height, which breaks shrinking).
+      const style = body ? getComputedStyle(body) : null;
+      const padY = style
+        ? parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+        : 0;
+      const total =
+        (head?.offsetHeight ?? 0) +
+        (content?.offsetHeight ?? 0) +
+        padY +
+        (foot?.offsetHeight ?? 0) +
+        4;
+      if (total < 120) return;
+
+      if (stable !== total) {
+        stable = total;
+        schedule();
+        return;
+      }
+      if (sent >= MAX_FITS || Math.abs(total - lastSent) < 4) return;
+      lastSent = total;
+      sent += 1;
+      // CSS pixels; Rust clamps and re-centres the window.
+      void api.fitResultWindow(window.innerWidth, total).catch(() => undefined);
+    }
+
+    schedule();
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [payload, stage, view, config?.ui.autoFit, config?.ui.resultFontSize]);
 
   /* ------------------------------------------------------------- interactions */
 
