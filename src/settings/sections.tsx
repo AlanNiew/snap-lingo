@@ -1,5 +1,5 @@
-/** The seven settings pages. Each one is a column of cards. */
-import { useState } from "react";
+/** The eight settings pages. Each one is a column of cards. */
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, type MonitorInfo, type OcrLanguage } from "../lib/api";
 import { OCR_ENGINES, PROVIDER_KEYS, TRANSLATE_ENGINES, engineMeta, type ProfileField } from "../lib/labels";
@@ -7,13 +7,15 @@ import {
   EMPTY_PROFILE,
   type AppConfig,
   type ConnectionCheck,
+  type EndpointInfo,
   type HistoryItem,
+  type LogFile,
   type OcrProvider,
   type ProviderPreset,
   type TranslateProfile,
   type TranslateProvider,
 } from "../lib/types";
-import { copyText, formatClock, formatDuration, truncate } from "../lib/util";
+import { copyText, cx, formatClock, formatDuration, truncate } from "../lib/util";
 import { useT } from "./context";
 import {
   Card,
@@ -144,6 +146,40 @@ function ApplyLink({ url, label }: { url: string; label?: string }) {
     <button className="btn btn-sm btn-ghost" title={url} onClick={() => void api.openExternal(url)}>
       {label ?? t("applyUrlOpen")} ↗
     </button>
+  );
+}
+
+/**
+ * Shows the request a channel will really send, so a typo in the endpoint or a
+ * token pasted into the wrong field is visible before a capture is attempted.
+ */
+function EndpointHint({ config, kind }: { config: AppConfig; kind: "ocr" | "translate" | "picture" }) {
+  const { t } = useT();
+  const [info, setInfo] = useState<EndpointInfo | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .describeEndpoints(config)
+      .then((all) => {
+        if (!alive) return;
+        setInfo(kind === "ocr" ? all.ocr : kind === "translate" ? all.translate : all.picture);
+      })
+      .catch(() => {
+        if (alive) setInfo(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [config, kind]);
+
+  if (!info || !info.url) return null;
+  return (
+    <div className="endpoint-hint">
+      <span className="endpoint-hint-tag">{t("endpointActual")}</span>
+      <code>{`${info.method} ${info.url}`}</code>
+      {info.note ? <span className="endpoint-hint-note">{info.note}</span> : null}
+    </div>
   );
 }
 
@@ -362,6 +398,7 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
               placeholder="http://127.0.0.1:1224"
             />
           </Field>
+          <EndpointHint config={config} kind="ocr" />
           <div className="row row-top" style={{ marginTop: 12 }}>
             <div className="row-main">
               <button className="btn" disabled={probing} onClick={() => void runProbe()}>
@@ -389,6 +426,7 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
               {t("ocrPictureUnavailable", { name: t(PROVIDER_KEYS[config.translate.provider]) })}
             </div>
           )}
+          <EndpointHint config={config} kind="picture" />
         </Card>
       ) : null}
 
@@ -402,6 +440,7 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
               model={config.ocr.model}
               set={(next) => setOcr(next, false)}
             />
+            <EndpointHint config={config} kind="ocr" />
             <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
               <PresetPicker
                 presets={PRESETS.filter((preset) => preset.visionModel)}
@@ -592,6 +631,7 @@ export function TranslateSection({ config, patch, notify }: Base) {
               set={setProfile}
               onTest={() => api.testTranslateConnection(config.translate)}
             />
+            <EndpointHint config={config} kind="translate" />
             <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
               <PresetPicker
                 presets={PRESETS.filter((preset) => preset.textModel)}
@@ -687,6 +727,7 @@ export function TranslateSection({ config, patch, notify }: Base) {
                 />
               </Field>
             ) : null}
+            <EndpointHint config={config} kind="translate" />
             <TranslateTest config={config} />
           </div>
         </Card>
@@ -933,6 +974,148 @@ export function HistorySection({
             ))}
           </div>
         )}
+      </Card>
+    </>
+  );
+}
+
+/* ==================================================================== logs */
+
+const LOG_LINE_LIMIT = 1200;
+const LOG_PROBLEM = /(ERROR|WARN|失败|出错|未能|超时|不可用|未授权|error|failed)/i;
+
+function lineTone(line: string): string {
+  if (/ERROR|失败|出错|未能|不可用|未授权|error|failed/i.test(line)) return "bad";
+  if (/WARN|超时|重试|改用|warn/i.test(line)) return "warn";
+  if (/本次任务|接口响应|正在调用|框选层|已冻结/.test(line)) return "info";
+  return "";
+}
+
+function humanBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+/**
+ * Reads the tail of the log file so a run can be explained after the fact:
+ * which engine ran, which URL was called, what came back, why it failed.
+ */
+export function LogsSection({ notify }: Base) {
+  const { t } = useT();
+  const [file, setFile] = useState<LogFile | null>(null);
+  const [query, setQuery] = useState("");
+  const [problemsOnly, setProblemsOnly] = useState(false);
+  const [auto, setAuto] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      setFile(await api.readLog());
+    } catch (error) {
+      notify(String(error), true);
+    }
+  }, [notify]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (!auto) return;
+    const timer = window.setInterval(() => void load(), 2500);
+    return () => window.clearInterval(timer);
+  }, [auto, load]);
+
+  const shown = useMemo(() => {
+    const lines = (file?.content ?? "").split("\n").filter((line) => line.trim() !== "");
+    const needle = query.trim().toLowerCase();
+    return lines.filter((line) => {
+      if (problemsOnly && !LOG_PROBLEM.test(line)) return false;
+      if (needle && !line.toLowerCase().includes(needle)) return false;
+      return true;
+    });
+  }, [file, query, problemsOnly]);
+
+  const clipped = shown.length > LOG_LINE_LIMIT;
+  const visible = clipped ? shown.slice(-LOG_LINE_LIMIT) : shown;
+
+  const copyAll = async () => {
+    const ok = await copyText(visible.join("\n"));
+    notify(ok ? t("copied") : t("copyFailed", { message: "" }), !ok);
+  };
+
+  const clear = async () => {
+    if (!window.confirm(t("logsClearConfirm"))) return;
+    try {
+      await api.clearLog();
+      await load();
+      notify(t("saved"));
+    } catch (error) {
+      notify(String(error), true);
+    }
+  };
+
+  const notes = [file ? humanBytes(file.bytes) : "", clipped ? t("logsTail") : ""].filter(Boolean).join(" · ");
+
+  return (
+    <>
+      <h1 className="page-title">{t("tabLogs")}</h1>
+      <p className="page-lead">{t("logsLead")}</p>
+
+      <Card
+        title={t("logsFile")}
+        note={notes}
+        actions={
+          <>
+            <button className="btn btn-sm btn-ghost" onClick={() => void load()}>
+              {t("logsRefresh")}
+            </button>
+            <button className="btn btn-sm btn-ghost" onClick={() => void api.revealLog()}>
+              {t("logsReveal")}
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              disabled={shown.length === 0}
+              onClick={() => void copyAll()}
+            >
+              {t("logsCopy")}
+            </button>
+            <button className="btn btn-sm btn-danger" onClick={() => void clear()}>
+              {t("logsClear")}
+            </button>
+          </>
+        }
+      >
+        <Row title={t("logsFile")} hint={file?.path ?? "…"}>
+          <div className="logs-tools">
+            <button
+              className={cx("btn btn-sm", problemsOnly ? "btn-primary" : "btn-ghost")}
+              onClick={() => setProblemsOnly((value) => !value)}
+            >
+              {t("logsErrorsOnly")}
+            </button>
+            <Switch checked={auto} onChange={setAuto} title={t("logsAuto")} />
+          </div>
+        </Row>
+        <div className="logs-filter">
+          <TextInput value={query} onChange={setQuery} placeholder={t("logsFilter")} />
+        </div>
+        <div className="logs-view">
+          {visible.length === 0 ? (
+            <div className="empty">
+              <div style={{ fontWeight: 500, color: "var(--text-soft)" }}>
+                {file?.exists && file.bytes > 0 ? t("logsNoMatch") : t("logsEmpty")}
+              </div>
+              <div style={{ marginTop: 4 }}>{t("logsEmptyHint")}</div>
+            </div>
+          ) : (
+            visible.map((line, index) => (
+              <div className={cx("logs-line", lineTone(line))} key={index}>
+                {line}
+              </div>
+            ))
+          )}
+        </div>
       </Card>
     </>
   );

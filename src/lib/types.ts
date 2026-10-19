@@ -156,6 +156,29 @@ export interface ConnectionCheck {
   sample: string | null;
 }
 
+/** Where a channel will actually send the request — shown in the settings page. */
+export interface EndpointInfo {
+  /** `POST` / `GET`, or `本机` when nothing leaves the machine. */
+  method: string;
+  url: string;
+  note: string;
+}
+
+export interface Endpoints {
+  ocr: EndpointInfo;
+  translate: EndpointInfo;
+  picture: EndpointInfo | null;
+  /** One-line summary of what the next capture will use. */
+  summary: string;
+}
+
+export interface LogFile {
+  path: string;
+  exists: boolean;
+  bytes: number;
+  content: string;
+}
+
 export interface ProviderPreset {
   id: string;
   label: string;

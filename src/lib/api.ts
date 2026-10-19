@@ -12,7 +12,9 @@ import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import type {
   AppConfig,
   ConnectionCheck,
+  Endpoints,
   HistoryItem,
+  LogFile,
   OcrConfig,
   ResultPayload,
   SelectionRect,
@@ -91,6 +93,11 @@ export const api = {
   hideSettings: () => invoke<void>("hide_settings"),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   revealConfigDir: () => invoke<void>("reveal_config_dir"),
+  describeEndpoints: (config: AppConfig) =>
+    invoke<Endpoints>("describe_endpoints", { config }),
+  readLog: () => invoke<LogFile>("read_log"),
+  clearLog: () => invoke<void>("clear_log"),
+  revealLog: () => invoke<void>("reveal_log"),
 };
 
 /* ------------------------------------------------------------------ listens */

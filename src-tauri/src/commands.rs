@@ -193,6 +193,172 @@ fn config_dir_of(app: &AppHandle) -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
+/* ----------------------------------------------------- 实际调用地址 / 日志 */
+
+#[derive(serde::Serialize)]
+pub struct EndpointInfo {
+    /// `POST` / `GET`，或 `本机`（完全不联网）。
+    pub method: String,
+    pub url: String,
+    pub note: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct Endpoints {
+    pub ocr: EndpointInfo,
+    pub translate: EndpointInfo,
+    /// 一步图片翻译的地址（只有当前配置真的会走它时才有值）。
+    pub picture: Option<EndpointInfo>,
+    pub summary: String,
+}
+
+/// 把所有渠道「实际会请求的地址」算出来给设置页展示，避免用户猜。
+#[tauri::command]
+pub fn describe_endpoints(config: AppConfig) -> Endpoints {
+    use crate::providers;
+
+    let ocr = match config.ocr.provider.as_str() {
+        "winocr" => EndpointInfo {
+            method: "本机".into(),
+            url: "—".into(),
+            note: "Windows 内置 OCR，离线运行，不发网络请求".into(),
+        },
+        "local" => EndpointInfo {
+            method: "POST".into(),
+            url: providers::ocr_endpoint(&config.ocr).unwrap_or_else(|| "—".into()),
+            note: "本地 OCR 服务（Umi-OCR 兼容 /api/ocr），图片不出本机".into(),
+        },
+        "vision" => EndpointInfo {
+            method: "POST".into(),
+            url: providers::ocr_endpoint(&config.ocr).unwrap_or_else(|| "—".into()),
+            note: format!("视觉大模型{}", model_note(&config.ocr.model)),
+        },
+        other => match config.picture_provider() {
+            Some(id) => EndpointInfo {
+                method: "POST".into(),
+                url: providers::image_endpoint(id, &config.translate).unwrap_or_else(|| "—".into()),
+                note: format!(
+                    "由「{}」一步完成识别 + 翻译{}",
+                    providers::provider_label(id),
+                    model_note(&config.translate.profile(id).model)
+                ),
+            },
+            None => EndpointInfo {
+                method: "—".into(),
+                url: "—".into(),
+                note: format!("{other}：请到「翻译」页选一家支持图片翻译的渠道"),
+            },
+        },
+    };
+
+    let translate = match config.translate.provider.as_str() {
+        "none" => EndpointInfo {
+            method: "—".into(),
+            url: "—".into(),
+            note: "只识别，不翻译".into(),
+        },
+        id => EndpointInfo {
+            method: "POST".into(),
+            url: providers::text_endpoint(id, &config.translate).unwrap_or_else(|| "—".into()),
+            note: format!(
+                "目标语言 {}{}",
+                config.translate.target_lang,
+                model_note(&config.translate.profile(id).model)
+            ),
+        },
+    };
+
+    let picture = config.picture_provider().and_then(|id| {
+        providers::image_endpoint(id, &config.translate).map(|url| EndpointInfo {
+            method: "POST".into(),
+            url,
+            note: format!("一步图片翻译（{}）", providers::provider_label(id)),
+        })
+    });
+
+    Endpoints {
+        summary: providers::describe_run(&config),
+        ocr,
+        translate,
+        picture,
+    }
+}
+
+fn model_note(model: &str) -> String {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("，模型 {trimmed}")
+    }
+}
+
+#[derive(serde::Serialize)]
+pub struct LogFile {
+    pub path: String,
+    pub exists: bool,
+    pub bytes: u64,
+    pub content: String,
+}
+
+/// 日志文件尾部（默认最后 256KB），「日志」页用来展示最近这次执行走了什么。
+#[tauri::command]
+pub fn read_log(app: AppHandle) -> Result<LogFile, String> {
+    const TAIL_BYTES: usize = 256 * 1024;
+    let path = config_dir_of(&app).join(crate::LOG_FILE_NAME);
+    let display = path.to_string_lossy().to_string();
+    if !path.exists() {
+        return Ok(LogFile {
+            path: display,
+            exists: false,
+            bytes: 0,
+            content: String::new(),
+        });
+    }
+    let data = std::fs::read(&path).map_err(|err| format!("读取日志失败：{err}"))?;
+    let total = data.len();
+    let slice = if total > TAIL_BYTES {
+        let mut start = total - TAIL_BYTES;
+        // 从下一行开始，避免第一条是半行。
+        while start < total && data[start] != b'\n' {
+            start += 1;
+        }
+        &data[start.min(total)..]
+    } else {
+        &data[..]
+    };
+    Ok(LogFile {
+        path: display,
+        exists: true,
+        bytes: total as u64,
+        content: String::from_utf8_lossy(slice).to_string(),
+    })
+}
+
+#[tauri::command]
+pub fn clear_log(app: AppHandle) -> Result<(), String> {
+    let path = config_dir_of(&app).join(crate::LOG_FILE_NAME);
+    std::fs::write(&path, b"").map_err(|err| format!("清空日志失败：{err}"))?;
+    log::info!("日志已由用户清空");
+    Ok(())
+}
+
+/// 在资源管理器里选中日志文件，方便直接拖给开发者。
+#[tauri::command]
+pub fn reveal_log(app: AppHandle) -> Result<(), String> {
+    let path = config_dir_of(&app).join(crate::LOG_FILE_NAME);
+    let target = if path.exists() {
+        path
+    } else {
+        config_dir_of(&app)
+    };
+    std::process::Command::new("explorer")
+        .arg(format!("/select,{}", target.to_string_lossy()))
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("打开日志位置失败：{err}"))
+}
+
 /* ------------------------------------------------------------------- capture */
 
 #[tauri::command]

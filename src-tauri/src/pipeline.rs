@@ -14,7 +14,7 @@ use crate::config::AppConfig;
 use crate::imageops;
 use crate::model::{new_id, now_ms, ResultPayload, SelectionRect, Stage, StageEvent};
 use crate::ocr_win;
-use crate::providers::{ImagePayload, Providers};
+use crate::providers::{self, ImagePayload, Providers};
 use crate::state::{lock, AppState, CaptureSession, SessionEntry};
 use crate::windows;
 use anyhow::{anyhow, bail, Result};
@@ -333,6 +333,12 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
     let providers = app.state::<AppState>().providers.clone();
     let preview = imageops::to_preview_data_url(&crop).ok();
     let (ocr_provider, model) = provider_labels(&cfg);
+    log::info!(
+        "本次任务：{} · 图像 {}×{}",
+        providers::describe_run(&cfg),
+        crop.width(),
+        crop.height()
+    );
 
     // One-step picture translation: Youdao / Baidu / Tencent read the picture
     // themselves, so the local OCR engine is skipped for this capture.

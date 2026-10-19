@@ -7,7 +7,7 @@
 //! retryable class of failures (429 / 5xx / transport), and strip model
 //! "thinking" leakage from the reply.
 
-use crate::config::{OcrConfig, TranslateConfig};
+use crate::config::{AppConfig, OcrConfig, TranslateConfig, DEFAULT_OPENAI_BASE_URL};
 use crate::model::ConnectionCheck;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine as _;
@@ -69,6 +69,20 @@ impl Providers {
         if cfg.model.trim().is_empty() {
             bail!("尚未配置 OCR 模型名称。");
         }
+        if let Some(url) = ocr_endpoint(cfg) {
+            trace_request(
+                "识别 · 视觉大模型",
+                "POST",
+                &url,
+                &[
+                    ("模型", cfg.model.clone()),
+                    ("目标语言", if one_shot { target_lang.to_string() } else { String::new() }),
+                    ("模式", if one_shot { "一次调用（原文+译文）".to_string() } else { "只识别".to_string() }),
+                    ("图片", format!("{} KB", image_data_url.len() / 1024 / 4 * 3)),
+                    ("密钥", mask_secret(&cfg.api_key)),
+                ],
+            );
+        }
 
         let (system, user_text, json_mode) = if one_shot {
             (
@@ -128,6 +142,23 @@ impl Providers {
         scoped.model = profile.model;
         scoped.model_tier = tier;
         let cfg = &scoped;
+        if let Some(url) = text_endpoint(&cfg.provider, cfg) {
+            let params: Vec<(&str, String)> = vec![
+                ("目标语言", cfg.target_lang.clone()),
+                ("文本", format!("{} 字", text.chars().count())),
+                ("模型", cfg.model.clone()),
+                ("档位", cfg.model_tier.clone()),
+                ("区域", cfg.region.clone()),
+                ("密钥", mask_secret(&cfg.api_key)),
+                ("应用密钥", mask_secret(&cfg.api_secret)),
+            ];
+            trace_request(
+                &format!("翻译 · {}", provider_label(&cfg.provider)),
+                "POST",
+                &url,
+                &params,
+            );
+        }
         match cfg.provider.as_str() {
             "none" => Ok(String::new()),
             "deepl" => self.deepl(cfg, text).await,
@@ -160,6 +191,22 @@ impl Providers {
         scoped.model = profile.model;
         scoped.model_tier = tier;
         let cfg = &scoped;
+        if let Some(url) = image_endpoint(&cfg.provider, cfg) {
+            let params: Vec<(&str, String)> = vec![
+                ("目标语言", cfg.target_lang.clone()),
+                ("图片", format!("{} KB", image.bytes.len() / 1024)),
+                ("档位", cfg.model_tier.clone()),
+                ("区域", cfg.region.clone()),
+                ("密钥", mask_secret(&cfg.api_key)),
+                ("应用密钥", mask_secret(&cfg.api_secret)),
+            ];
+            trace_request(
+                &format!("一步图片翻译 · {}", provider_label(&cfg.provider)),
+                "POST",
+                &url,
+                &params,
+            );
+        }
         let (source, translation) = match cfg.provider.as_str() {
             "youdao" => self.youdao_image(cfg, image).await?,
             "baidu" => self.baidu_image(cfg, image).await?,
@@ -177,6 +224,15 @@ impl Providers {
     /// never leaves it.
     pub async fn local_ocr(&self, cfg: &OcrConfig, png: &[u8]) -> Result<String> {
         let url = local_ocr_url(cfg)?;
+        trace_request(
+            "识别 · 本地 OCR 服务",
+            "POST",
+            &url,
+            &[
+                ("图片", format!("{} KB", png.len() / 1024)),
+                ("选项", "data.format=text · tbpu.parser=multi_para".to_string()),
+            ],
+        );
         let body = json!({
             "base64": base64::engine::general_purpose::STANDARD.encode(png),
             "options": {
@@ -194,6 +250,11 @@ impl Providers {
             .map_err(|err| anyhow!("连接本地 OCR 服务失败：{}", classify_transport(&err)))?;
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
+        log::info!(
+            "识别 · 本地 OCR 服务 响应 {} · {} 字节",
+            status.as_u16(),
+            text.len()
+        );
         if !status.is_success() {
             bail!(
                 "本地 OCR 服务返回 HTTP {}。请确认服务已经启动、地址端口正确。",
@@ -1080,11 +1141,24 @@ impl Providers {
     {
         let mut last: Option<anyhow::Error> = None;
         for attempt in 1..=MAX_ATTEMPTS {
+            let started = Instant::now();
             let outcome = match build().send().await {
-                Err(err) => Err(anyhow!(classify_transport(&err))),
+                Err(err) => {
+                    log::warn!(
+                        "{what} 第 {attempt}/{MAX_ATTEMPTS} 次请求失败（{} ms）：{err}",
+                        started.elapsed().as_millis()
+                    );
+                    Err(anyhow!(classify_transport(&err)))
+                }
                 Ok(resp) => {
                     let status = resp.status();
                     let body = resp.text().await.unwrap_or_default();
+                    log::info!(
+                        "{what} 响应 {} · {} ms · {} 字节",
+                        status.as_u16(),
+                        started.elapsed().as_millis(),
+                        body.len()
+                    );
                     if status.is_success() {
                         return Ok(body);
                     }
@@ -1110,6 +1184,182 @@ impl Providers {
 }
 
 /* --------------------------------------------------------------- helpers */
+
+/* ---------------------------------------------- 日志与「实际调用」端点展示 */
+
+/// 日志里出现的端点（与各引擎里的默认值保持一致）。
+const DEEPL_FREE_ENDPOINT: &str = "https://api-free.deepl.com/v2/translate";
+const DEEPL_PRO_ENDPOINT: &str = "https://api.deepl.com/v2/translate";
+const MICROSOFT_ENDPOINT: &str = "https://api.cognitive.microsofttranslator.com/translate";
+const GOOGLE_ENDPOINT: &str = "https://translation.googleapis.com/language/translate/v2";
+const YOUDAO_ENDPOINT: &str = "https://openapi.youdao.com/api";
+const YOUDAO_IMAGE_ENDPOINT: &str = "https://openapi.youdao.com/ocrtransapi";
+const BAIDU_ENDPOINT: &str = "https://fanyi-api.baidu.com/api/trans/vip/translate";
+const BAIDU_LLM_ENDPOINT: &str = "https://fanyi-api.baidu.com/ait/api/aiTextTranslate";
+const BAIDU_IMAGE_ENDPOINT: &str = "https://fanyi-api.baidu.com/api/trans/sdk/picture";
+const TENCENT_HOST: &str = "tmt.tencentcloudapi.com";
+
+fn default_or(base: &str, fallback: &str) -> String {
+    let trimmed = base.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// 这个翻译渠道实际会请求的地址（`base_url` 为空时用官方默认值）。
+pub fn text_endpoint(provider: &str, cfg: &TranslateConfig) -> Option<String> {
+    let profile = cfg.profile(provider);
+    let base = default_or(&profile.base_url, "");
+    let own = |fallback: &str| {
+        if base.is_empty() {
+            fallback.to_string()
+        } else {
+            base.clone()
+        }
+    };
+    Some(match provider {
+        "openai" => {
+            let root = if base.is_empty() {
+                DEFAULT_OPENAI_BASE_URL.trim_end_matches('/').to_string()
+            } else {
+                base.clone()
+            };
+            format!("{root}/chat/completions")
+        }
+        "deepl" => {
+            if cfg.deepl_plan.trim() == "pro" {
+                DEEPL_PRO_ENDPOINT.to_string()
+            } else {
+                DEEPL_FREE_ENDPOINT.to_string()
+            }
+        }
+        "microsoft" => own(MICROSOFT_ENDPOINT),
+        "google" => own(GOOGLE_ENDPOINT),
+        "youdao" => own(YOUDAO_ENDPOINT),
+        "baidu" => {
+            if profile.tier("baidu") == "llm" {
+                BAIDU_LLM_ENDPOINT.to_string()
+            } else {
+                own(BAIDU_ENDPOINT)
+            }
+        }
+        "tencent" => format!("https://{}/", own(TENCENT_HOST)),
+        _ => return None,
+    })
+}
+
+/// 一步图片翻译实际会请求的地址。
+pub fn image_endpoint(provider: &str, cfg: &TranslateConfig) -> Option<String> {
+    let profile = cfg.profile(provider);
+    let base = default_or(&profile.base_url, "");
+    let own = |fallback: &str| {
+        if base.is_empty() {
+            fallback.to_string()
+        } else {
+            base.clone()
+        }
+    };
+    Some(match provider {
+        "youdao" => own(YOUDAO_IMAGE_ENDPOINT),
+        "baidu" => own(BAIDU_IMAGE_ENDPOINT),
+        "tencent" => format!("https://{}/", own(TENCENT_HOST)),
+        _ => return None,
+    })
+}
+
+/// OCR 渠道实际会请求的地址；Windows 内置 OCR 完全在本机，没有地址。
+pub fn ocr_endpoint(ocr: &OcrConfig) -> Option<String> {
+    match ocr.provider.as_str() {
+        "local" => local_ocr_url(ocr).ok(),
+        "vision" => {
+            let root = default_or(&ocr.base_url, DEFAULT_OPENAI_BASE_URL);
+            Some(format!("{root}/chat/completions"))
+        }
+        _ => None,
+    }
+}
+
+/// 一行摘要：这次会走哪个识别渠道、哪个翻译接口。写进日志方便自查。
+pub fn describe_run(cfg: &AppConfig) -> String {
+    let ocr = match cfg.ocr.provider.as_str() {
+        "winocr" => "Windows 内置 OCR（离线，本机）".to_string(),
+        "local" => format!(
+            "本地 OCR 服务（{}）",
+            ocr_endpoint(&cfg.ocr).unwrap_or_else(|| "地址未填".into())
+        ),
+        "vision" => format!(
+            "视觉大模型（{}）",
+            ocr_endpoint(&cfg.ocr).unwrap_or_else(|| "地址未填".into())
+        ),
+        other => match cfg.picture_provider() {
+            Some(id) => format!("一步图片翻译（{}）", provider_label(id)),
+            None => format!("{other}（未配置）"),
+        },
+    };
+    let translate = match cfg.translate.provider.as_str() {
+        "none" => "不翻译".to_string(),
+        id => format!(
+            "{}（{}）",
+            provider_label(id),
+            text_endpoint(id, &cfg.translate).unwrap_or_else(|| "地址未填".into())
+        ),
+    };
+    format!("OCR = {ocr} · 翻译 = {translate}")
+}
+
+/// 密钥的脱敏展示：只露头尾，绝不把完整密钥写进日志。
+pub fn mask_secret(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "未设置".to_string();
+    }
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= 10 {
+        return "已设置".to_string();
+    }
+    let head: String = chars.iter().take(3).collect();
+    let tail: String = chars.iter().skip(chars.len() - 4).collect();
+    format!("{head}…{tail}")
+}
+
+fn is_secret_query(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "key" | "api_key" | "apikey" | "access_token" | "token" | "sign" | "signature" | "q"
+    )
+}
+
+/// URL 里的敏感查询参数打码（谷歌翻译把密钥放在 URL 上）。
+fn scrub_url(url: &str) -> String {
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    let scrubbed: Vec<String> = query
+        .split('&')
+        .map(|pair| match pair.split_once('=') {
+            Some((k, _)) if is_secret_query(k) => format!("{k}=…"),
+            _ => pair.to_string(),
+        })
+        .collect();
+    format!("{base}?{}", scrubbed.join("&"))
+}
+
+/// 每发出一个请求就留一行：走了哪个渠道、哪个地址、带了什么参数。
+pub fn trace_request(engine: &str, method: &str, url: &str, params: &[(&str, String)]) {
+    let mut line = format!("调用 {engine} · {method} {}", scrub_url(url));
+    let pairs: Vec<String> = params
+        .iter()
+        .filter(|(_, value)| !value.trim().is_empty() && value != "未设置")
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect();
+    if !pairs.is_empty() {
+        line.push_str(" · ");
+        line.push_str(&pairs.join(" · "));
+    }
+    log::info!("{line}");
+}
 
 fn require_key(key: &str, what: &str) -> Result<()> {
     if key.trim().is_empty() {

@@ -14,6 +14,7 @@ const ID_CAPTURE: &str = "tray-capture";
 const ID_CANCEL: &str = "tray-cancel";
 const ID_SETTINGS: &str = "tray-settings";
 const ID_HISTORY: &str = "tray-history";
+const ID_LOGS: &str = "tray-logs";
 const ID_AUTOSTART: &str = "tray-autostart";
 const ID_QUIT: &str = "tray-quit";
 
@@ -34,6 +35,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let capture = MenuItem::with_id(app, ID_CAPTURE, "截图翻译", true, None::<&str>)?;
     let cancel = MenuItem::with_id(app, ID_CANCEL, "取消本次截图", true, None::<&str>)?;
     let history = MenuItem::with_id(app, ID_HISTORY, "历史记录…", true, None::<&str>)?;
+    let logs = MenuItem::with_id(app, ID_LOGS, "查看日志…", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, ID_SETTINGS, "设置…", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let startup = CheckMenuItem::with_id(
@@ -53,6 +55,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             &capture,
             &cancel,
             &history,
+            &logs,
             &settings,
             &sep1,
             &startup,
@@ -139,6 +142,10 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
         ID_HISTORY => {
             windows::show_settings(app);
             let _ = app.emit("ui:navigate", "history");
+        }
+        ID_LOGS => {
+            windows::show_settings(app);
+            let _ = app.emit("ui:navigate", "logs");
         }
         ID_SETTINGS => windows::show_settings(app),
         ID_AUTOSTART => {

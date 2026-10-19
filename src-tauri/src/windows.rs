@@ -72,8 +72,10 @@ pub fn result_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .inner_size(820.0, 480.0)
         .min_inner_size(420.0, 260.0)
         .decorations(false)
-        .transparent(true)
-        .shadow(false)
+        // Opaque on purpose: a transparent window that is larger than its card
+        // shows the desktop as a see-through band you can still click into.
+        // Window-level shadow (drawn by Windows) replaces the old CSS shadow.
+        .shadow(true)
         .always_on_top(true)
         .skip_taskbar(false)
         .resizable(true)

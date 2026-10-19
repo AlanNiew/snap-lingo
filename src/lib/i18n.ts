@@ -20,6 +20,7 @@ const STRINGS = {
   tabCapture: ["截图", "Capture"],
   tabAppearance: ["外观", "Appearance"],
   tabHistory: ["历史", "History"],
+  tabLogs: ["日志", "Logs"],
   tabAbout: ["关于", "About"],
 
   /* general */
@@ -286,6 +287,27 @@ const STRINGS = {
   historyEmptyHint: ["完成一次截图翻译后，记录会出现在这里。", "Your captures will show up here."],
   historyClear: ["清空历史", "Clear history"],
   historyClearConfirm: ["确定要清空全部历史记录吗？", "Clear the whole history?"],
+
+  /* logs */
+  logsLead: [
+    "这里记录每次执行走了哪个识别渠道、调用了哪个接口、地址与关键参数，以及失败原因。",
+    "Every run logs which engine ran, which endpoint was called, the key parameters and why it failed.",
+  ],
+  logsRefresh: ["刷新", "Refresh"],
+  logsAuto: ["自动刷新", "Auto refresh"],
+  logsFilter: ["过滤（渠道 / 地址 / 关键字）", "Filter (engine / host / keyword)"],
+  logsErrorsOnly: ["只看问题", "Problems only"],
+  logsClear: ["清空日志", "Clear log"],
+  logsClearConfirm: ["确定要清空日志文件吗？", "Clear the log file?"],
+  logsReveal: ["打开文件位置", "Show in folder"],
+  logsCopy: ["复制全部", "Copy all"],
+  logsEmpty: ["还没有日志", "No log entries yet"],
+  logsEmptyHint: ["完成一次截图翻译后回来看这里。", "Run a capture and come back."],
+  logsTail: ["只显示最后 256 KB，完整内容在日志文件里。", "Showing the last 256 KB; the file holds everything."],
+  logsFile: ["日志文件", "Log file"],
+  logsNoMatch: ["没有匹配的行", "No matching lines"],
+  endpointActual: ["实际调用", "Will call"],
+  endpointLocal: ["本机运行，不发网络请求", "Runs locally, no network request"],
 
   /* result window */
   resultOcr: ["识别中…", "Recognising…"],

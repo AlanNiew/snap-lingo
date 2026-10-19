@@ -19,12 +19,21 @@ import {
   CaptureSection,
   GeneralSection,
   HistorySection,
+  LogsSection,
   OcrSection,
   TranslateSection,
   type PatchFn,
 } from "./sections";
 
-type TabId = "general" | "ocr" | "translate" | "capture" | "appearance" | "history" | "about";
+type TabId =
+  | "general"
+  | "ocr"
+  | "translate"
+  | "capture"
+  | "appearance"
+  | "history"
+  | "logs"
+  | "about";
 
 const NAV: Array<{ id: TabId; key: StringKey }> = [
   { id: "general", key: "tabGeneral" },
@@ -33,6 +42,7 @@ const NAV: Array<{ id: TabId; key: StringKey }> = [
   { id: "capture", key: "tabCapture" },
   { id: "appearance", key: "tabAppearance" },
   { id: "history", key: "tabHistory" },
+  { id: "logs", key: "tabLogs" },
   { id: "about", key: "tabAbout" },
 ];
 
@@ -209,6 +219,9 @@ export default function SettingsApp() {
       break;
     case "history":
       page = <HistorySection {...base} history={history} reloadHistory={reloadHistory} />;
+      break;
+    case "logs":
+      page = <LogsSection {...base} />;
       break;
     case "about":
       page = <AboutSection config={config} monitors={monitors} />;

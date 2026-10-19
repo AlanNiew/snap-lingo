@@ -36,6 +36,9 @@ use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 /// record the user is expected to curate.
 const LOG_MAX_BYTES: u64 = 512 * 1024;
 
+/// 日志文件名，`commands.rs` 的「日志」页也读它。
+pub const LOG_FILE_NAME: &str = "snaplingo.log";
+
 /* ------------------------------------------------------------------ logging */
 
 struct FileLogger {
@@ -80,7 +83,7 @@ fn timestamp() -> String {
 }
 
 fn init_logging(dir: &Path) {
-    let path = dir.join("snaplingo.log");
+    let path = dir.join(LOG_FILE_NAME);
     if std::fs::metadata(&path).map(|m| m.len() > LOG_MAX_BYTES).unwrap_or(false) {
         let _ = std::fs::remove_file(&path);
     }
@@ -267,6 +270,10 @@ pub fn run() {
             commands::test_ocr_connection,
             commands::test_translate_connection,
             commands::test_local_ocr_connection,
+            commands::describe_endpoints,
+            commands::read_log,
+            commands::clear_log,
+            commands::reveal_log,
             commands::ocr_languages,
             commands::ocr_probe,
             commands::reveal_config_dir,
