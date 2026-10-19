@@ -131,6 +131,10 @@ const STRINGS = {
   applyUrl: ["官方申请地址", "Get credentials"],
   applyUrlOpen: ["打开申请页面", "Open sign-up page"],
   presetCustom: ["自定义 / 已手动填写", "Custom / filled in"],
+  vendorNote: [
+    "每个厂商的密钥各存各的，切换厂商会同时切换接口地址与模型；已填过的厂商切回来还在。",
+    "Each vendor keeps its own key: switching vendor also switches the endpoint and model, and switching back restores what you typed before.",
+  ],
   presetTextOnly: ["仅文本模型", "text only"],
   channel: ["渠道", "Service"],
 

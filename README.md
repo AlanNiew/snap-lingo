@@ -71,6 +71,7 @@ npm run tauri build
      - `本地 OCR 服务`：连接本机运行的离线识别服务（推荐 [Umi-OCR](https://github.com/hiroi-sora/Umi-OCR/releases)，免费开源、解压即用），填 `http://127.0.0.1:1224` 即可，图片完全不出本机；
      - `由翻译渠道完成（一步图片翻译）`：把图片直接交给有道 / 百度 / 腾讯识别并翻译，本机不跑 OCR（需该渠道开通「图片翻译」服务）。
    - **翻译渠道**在「翻译」页用下拉列表选：OpenAI 兼容、DeepL、微软、谷歌、有道、百度、腾讯，或「仅识别不翻译」。选中一个渠道后只显示它需要的输入框，并给出官方申请地址；每个渠道的 Key 各存各的，互不串用。百度还能在 **通用文本翻译 / 大模型翻译** 之间选，腾讯可选 **大模型版 / 极速版**。
+   - **大模型厂商**用同一页里的预设下拉选（NVIDIA、DeepSeek、智谱、OpenCode Zen…）：选中即填好地址与模型，**每家的地址 / 模型 / 密钥也是分开保存的**，切换厂商不会串用彼此的 Key。
    - 只想离线使用：`OCR = Windows 内置 OCR`（或 `本地 OCR 服务`），`翻译 = 仅识别不翻译`。
    - 想一条请求搞定：`OCR = 视觉大模型`，填好 OpenAI 兼容的地址/Key/模型；若开启 **一次调用**，则同一次请求同时返回原文与译文。
 3. 用 `Ctrl + Alt + Z`、或托盘菜单「截图翻译」触发截图（单击托盘图标是打开**设置**，不会截屏）。
@@ -91,29 +92,31 @@ npm run tauri build
   "shortcut": "Ctrl+Alt+Z",
   "ocr": {
     "provider": "winocr",            // winocr | vision | local | picture
-    "baseUrl": "https://integrate.api.nvidia.com/v1",  // local 时填本机服务地址，如 http://127.0.0.1:1224
-    "apiKey": "",
+    "vendor": "",                    // vision：选中的厂商预设（取值见下面 profiles 的键）
+    "profiles": {                    // vision：每个厂商各存各的地址 / 密钥 / 模型
+      "nvidia": { "baseUrl": "https://integrate.api.nvidia.com/v1", "apiKey": "", "model": "nvidia/nemotron-3.5-super-vl" },
+      "custom": { "baseUrl": "", "apiKey": "", "model": "" }
+    },
+    "baseUrl": "http://127.0.0.1:1224", // 仅 local（本机 OCR 服务）使用
+    "apiKey": "",                    // 旧版扁平字段，首次启动会迁入 profiles.custom
     "model": "",
     "language": "",                  // 空 = 跟随系统；如 "zh-Hans"、"en-US"
     "oneShot": false,                // vision：一次调用同时返回原文和译文
     "prompt": ""
   },
   "translate": {
-    "provider": "openai",            // openai | deepl | microsoft | google | youdao | youdao-llm | baidu | tencent | none
-    "profiles": {                    // 每个渠道各存各的凭证，互不串用
-      "openai": {
-        "baseUrl": "https://integrate.api.nvidia.com/v1",
-        "apiKey": "",
-        "apiSecret": "",
-        "region": "",
-        "model": "nvidia/nemotron-3-ultra-550b-a55b"
-      },
-      "deepl":   { "baseUrl": "", "apiKey": "", "apiSecret": "", "region": "", "model": "" },
-      "youdao":  { "apiKey": "", "apiSecret": "" },
-      "youdao-llm": { "apiKey": "", "apiSecret": "", "modelTier": "pro" },   // pro | lite
-      "baidu":   { "apiKey": "", "apiSecret": "", "modelTier": "standard" }, // standard | llm
-      "baidu":   { "apiKey": "", "apiSecret": "", "modelTier": "llm", "auth": "key", "bearer": "" }, // 大模型版可选 API Key 鉴权
-      "tencent": { "apiKey": "", "apiSecret": "", "region": "", "modelTier": "llm" } // llm | lite
+    "provider": "openai",            // openai | deepl | microsoft | google | youdao | baidu | tencent | none
+    "vendor": "nvidia",              // openai 渠道里选中的厂商（nvidia / deepseek / 智谱 / opencode …）
+    "profiles": {                    // 每个渠道（含 openai 渠道里的每个厂商）各存各的凭证
+      "nvidia":    { "baseUrl": "https://integrate.api.nvidia.com/v1", "apiKey": "", "model": "nvidia/nemotron-3-ultra-550b-a55b" },
+      "deepseek":  { "baseUrl": "https://api.deepseek.com/v1", "apiKey": "", "model": "deepseek-flash" },
+      "opencode":  { "baseUrl": "https://opencode.ai/zen/v1", "apiKey": "", "model": "deepseek-v4.1-flash" },
+      "deepl":     { "apiKey": "" },
+      "microsoft": { "apiKey": "", "region": "" },
+      "google":    { "apiKey": "" },
+      "youdao":    { "apiKey": "", "apiSecret": "", "modelTier": "llm" },   // 通用 / 子曰 Pro(llm) / 子曰 Lite(lite)
+      "baidu":     { "apiKey": "", "apiSecret": "", "modelTier": "standard", "auth": "sign", "bearer": "" }, // 大模型版可改 auth:"key" + bearer
+      "tencent":   { "apiKey": "", "apiSecret": "", "region": "", "modelTier": "llm" } // llm | lite
     },
     "targetLang": "zh-CN",
     "deeplPlan": "free",             // free | pro
@@ -189,7 +192,13 @@ npm run tauri build
 
 其他说明：图片递交前会**自动压到 3.5MB 以内**（先降质量再缩边），超过服务商限制会给出明确提示；返回的原文与译文会一并写入历史记录。
 
-每个渠道的 Key / 区域**各存各的**（存在各自 `profiles` 条目里）：从 OpenRouter 换到微软翻译再换回来，两边的密钥都还在，也绝不会把 A 家的 Key 显示到 B 家的输入框里。旧版配置里扁平的 `translate.apiKey` 等字段会在首次启动时自动迁入对应渠道，不会丢失。
+每一家服务商的 Key / 区域都**各存各的**（在 `profiles` 里各占一个条目）：
+
+- **翻译渠道**：从 OpenRouter 换到微软翻译再换回来，两边的密钥都还在，也绝不会把 A 家的 Key 显示到 B 家的输入框里。
+- **大模型厂商**：「大模型 · OpenAI 兼容」这一个渠道里可以选很多家厂商（NVIDIA、DeepSeek、智谱、OpenCode Zen、Groq…），**每家厂商也是一套独立的地址 + 模型 + 密钥**——切到 DeepSeek 就只看到 DeepSeek 的地址和 Key，切回 NVIDIA 还是原来那套。
+- **视觉大模型**：识别页选「视觉大模型」时同样按厂商分开存（每个厂商一份地址 + 模型 + 密钥），另外保留一个「自定义」槽位。
+
+旧版配置里扁平的 `translate.apiKey` / `ocr.apiKey` 等字段会在首次启动时自动迁入对应槽位（识别的那份进 `custom`），不会丢失。
 
 > 云翻译引擎的目标语言支持范围由各家自己决定（例如有道/百度/腾讯对部分小语种有限制）。如果返回「不支持的语言」，换成该服务商支持的语言，或改用 OpenAI 兼容接口的 LLM 翻译即可。
 >
