@@ -90,11 +90,38 @@ pub fn result_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
+/// Centre the result window on the monitor the cursor is on, at about half the
+/// screen. Doing this on every show keeps the popup in a predictable place and
+/// — together with the frontend no longer measuring its own content — means the
+/// window never fights your own resizing.
+fn place_result(app: &AppHandle, window: &WebviewWindow) {
+    let monitor = app
+        .cursor_position()
+        .ok()
+        .and_then(|point| app.monitor_from_point(point.x, point.y).ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten());
+
+    let Some(monitor) = monitor else {
+        return;
+    };
+
+    // Physical pixels throughout: `work_area` is physical, so mixing in logical
+    // sizes here would land the window off-screen on scaled displays.
+    let area = monitor.work_area();
+    let width = (area.size.width / 2).clamp(420, area.size.width.max(1));
+    let height = (area.size.height / 2).clamp(260, area.size.height.max(1));
+    let x = area.position.x + (area.size.width as i32 - width as i32) / 2;
+    let y = area.position.y + (area.size.height as i32 - height as i32) / 2;
+    let _ = window.set_size(PhysicalSize::new(width, height));
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
 /// Bring the result window up (creating it on first use) and let the frontend
 /// paint from `get_last_result`.
 pub fn show_result(app: &AppHandle) {
     match result_window(app) {
         Ok(window) => {
+            place_result(app, &window);
             let _ = window.show();
             let _ = window.set_focus();
         }
