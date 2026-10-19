@@ -287,6 +287,11 @@ const STRINGS = {
   ],
   autoCopy: ["自动复制译文", "Copy the translation automatically"],
   autoCopyHint: ["翻译完成后直接写入剪贴板。", "Puts the result on the clipboard when it is ready."],
+  notifyCard: ["失败时弹出提示卡片", "Show a notice card when something fails"],
+  notifyCardHint: [
+    "屏幕右下角弹出一张 SnapLingo 卡片，点一下可直接跳到日志页。关闭后失败只会出现在结果窗口和日志里。",
+    "Pops a small SnapLingo card in the corner of the screen; clicking it opens the log. When off, failures only appear in the result window and the log.",
+  ],
   closeOnBlur: ["失焦时自动隐藏结果", "Hide the result when it loses focus"],
   closeOnBlurHint: [
     "点击其他窗口后结果窗口自动隐藏，适合连续截图。",

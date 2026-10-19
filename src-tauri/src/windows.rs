@@ -18,10 +18,11 @@ pub const RESULT: &str = "result";
 pub const TOAST: &str = "toast";
 pub const OVERLAY_PREFIX: &str = "overlay-";
 
-/// Size and screen margin of the in-app notice (physical pixels at 100% DPI).
+/// Size and screen margin of the in-app notice (logical pixels at 100% DPI;
+/// the position is computed from the window's real physical size).
 pub const TOAST_WIDTH: f64 = 400.0;
-pub const TOAST_HEIGHT: f64 = 150.0;
-const TOAST_MARGIN: i32 = 18;
+pub const TOAST_HEIGHT: f64 = 164.0;
+const TOAST_MARGIN: i32 = 24;
 
 /// The overlay preview is capped so a 4K frame does not become a ~20 MB IPC
 /// payload. Selection accuracy is unaffected: the user's rectangle is mapped
@@ -143,8 +144,14 @@ fn place_toast(app: &AppHandle, window: &WebviewWindow) {
     };
 
     let area = monitor.work_area();
-    let x = area.position.x + area.size.width as i32 - TOAST_WIDTH as i32 - TOAST_MARGIN;
-    let y = area.position.y + area.size.height as i32 - TOAST_HEIGHT as i32 - TOAST_MARGIN;
+    // `inner_size` above is logical, so ask the window for its *physical* size.
+    // Using the logical numbers here pushed the card off the right edge and
+    // under the taskbar on scaled displays (125% / 150%).
+    let size = window
+        .outer_size()
+        .unwrap_or_else(|_| PhysicalSize::new(TOAST_WIDTH as u32, TOAST_HEIGHT as u32));
+    let x = area.position.x + area.size.width as i32 - size.width as i32 - TOAST_MARGIN;
+    let y = area.position.y + area.size.height as i32 - size.height as i32 - TOAST_MARGIN;
     let _ = window.set_position(PhysicalPosition::new(x, y));
 }
 

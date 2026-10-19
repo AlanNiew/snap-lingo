@@ -889,6 +889,9 @@ export function AppearanceSection({ config, patch }: Base) {
         <Row title={t("autoCopy")} hint={t("autoCopyHint")}>
           <Switch checked={config.ui.autoCopy} onChange={(next) => setUi({ autoCopy: next }, true)} />
         </Row>
+        <Row title={t("notifyCard")} hint={t("notifyCardHint")}>
+          <Switch checked={config.ui.notify} onChange={(next) => setUi({ notify: next }, true)} />
+        </Row>
         <Row title={t("closeOnBlur")} hint={t("closeOnBlurHint")}>
           <Switch checked={config.ui.closeOnBlur} onChange={(next) => setUi({ closeOnBlur: next }, true)} />
         </Row>
