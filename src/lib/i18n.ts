@@ -296,6 +296,11 @@ const STRINGS = {
   ],
   autoCopy: ["自动复制译文", "Copy the translation automatically"],
   autoCopyHint: ["翻译完成后直接写入剪贴板。", "Puts the result on the clipboard when it is ready."],
+  autoFit: ["结果窗口自适应内容", "Fit the result window to its content"],
+  autoFitHint: [
+    "开启后窗口高度跟着译文长短变化（不会超过屏幕）；关闭时固定为屏幕的一半，由你手动调整。",
+    "When on, the window height follows the text (never taller than the screen). When off, it stays at half the screen and you resize it yourself.",
+  ],
   notifyCard: ["失败时弹出提示卡片", "Show a notice card when something fails"],
   notifyCardHint: [
     "屏幕右下角弹出一张 SnapLingo 卡片，点一下可直接跳到日志页。关闭后失败只会出现在结果窗口和日志里。",

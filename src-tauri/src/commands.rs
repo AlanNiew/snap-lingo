@@ -497,14 +497,42 @@ pub fn hide_result(app: AppHandle) {
     }
 }
 
-/// Grow/shrink the result window to its content, within sane bounds.
+/// Grow/shrink the result window to its content (only used when "fit the
+/// content" is switched on), never taller than the screen it sits on, and keep
+/// it centred while it changes.
 #[tauri::command]
 pub fn fit_result_window(app: AppHandle, width: f64, height: f64) {
-    if let Some(window) = app.get_webview_window(windows::RESULT) {
-        let width = width.clamp(360.0, 1600.0);
-        let height = height.clamp(200.0, 1400.0);
+    let Some(window) = app.get_webview_window(windows::RESULT) else {
+        return;
+    };
+    let mut width = width.clamp(360.0, 1600.0);
+    let mut height = height.clamp(200.0, 1400.0);
+
+    let Ok(Some(monitor)) = window.current_monitor() else {
         let _ = window.set_size(tauri::LogicalSize::new(width, height));
+        return;
+    };
+
+    // `work_area` is physical; the values coming from the page are CSS pixels, so
+    // scale the allowance instead of mixing the two unit systems.
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let margin = 24.0;
+    let usable_w = area.size.width as f64 / scale - margin;
+    let usable_h = area.size.height as f64 / scale - margin;
+    if usable_w > 320.0 {
+        width = width.min(usable_w);
     }
+    if usable_h > 200.0 {
+        height = height.min(usable_h);
+    }
+
+    let _ = window.set_size(tauri::LogicalSize::new(width, height));
+
+    let origin = area.position.to_logical::<f64>(scale);
+    let x = origin.x + ((usable_w + margin) - width) / 2.0;
+    let y = origin.y + ((usable_h + margin) - height) / 2.0;
+    let _ = window.set_position(tauri::LogicalPosition::new(x.max(origin.x), y.max(origin.y)));
 }
 
 #[tauri::command]

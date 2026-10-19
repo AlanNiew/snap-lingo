@@ -229,6 +229,8 @@ pub struct UiConfig {
     pub result_view: String,
     /// Show the captured picture in the result window.
     pub result_show_image: bool,
+    /// Let the result window grow/shrink to fit its content (off = fixed size).
+    pub auto_fit: bool,
     pub close_on_blur: bool,
     pub result_font_size: u32,
     pub theme: String,
@@ -243,6 +245,7 @@ impl Default for UiConfig {
             auto_copy: false,
             result_view: "both".into(),
             result_show_image: true,
+            auto_fit: false,
             close_on_blur: false,
             result_font_size: 16,
             theme: "system".into(),
