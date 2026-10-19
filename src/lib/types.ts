@@ -12,8 +12,23 @@ export type TranslateProvider =
   | "none";
 export type DeepLPlan = "free" | "pro";
 
+/** Endpoint, key and model of one vision service. Vendors keep their own copy so
+ *  a key typed for one model provider never shows up under another one. */
+export interface OcrProfile {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+/** A blank vision profile, used while the user is still filling one in. */
+export const EMPTY_OCR_PROFILE: OcrProfile = { baseUrl: "", apiKey: "", model: "" };
+
 export interface OcrConfig {
   provider: OcrProvider;
+  /** Which vision vendor is selected (a preset id); "" = hand-filled. */
+  vendor: string;
+  /** Per-vendor credentials for the vision engine. */
+  profiles: Record<string, OcrProfile>;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -58,7 +73,10 @@ export const EMPTY_PROFILE: TranslateProfile = {
 
 export interface TranslateConfig {
   provider: TranslateProvider;
-  /** One entry per engine, keyed by provider id. */
+  /** Which model vendor is selected inside the OpenAI-compatible channel.
+   *  Empty = the channel's own slot. */
+  vendor: string;
+  /** One entry per engine (or per vendor inside the LLM channel). */
   profiles: Record<string, TranslateProfile>;
   /** BCP-47-ish target language tag, e.g. "zh-CN", "en", "ja". */
   targetLang: string;

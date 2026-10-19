@@ -17,6 +17,23 @@ pub const DEFAULT_TEXT_MODEL: &str = "nvidia/nemotron-3-ultra-550b-a55b";
 /// Local HTTP OCR service (Umi-OCR ships this endpoint by default).
 pub const DEFAULT_LOCAL_OCR_URL: &str = "http://127.0.0.1:1224";
 
+/// Preset ids are short lowercase slugs (the built-in list lives in the UI).
+/// Anything else counts as "hand-filled", so a stray string can never create an
+/// unexpected credential slot.
+fn vendor_id(value: &str) -> String {
+    let value = value.trim();
+    let ok = !value.is_empty()
+        && value.len() <= 32
+        && value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.');
+    if ok {
+        value.to_string()
+    } else {
+        String::new()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct OcrConfig {
@@ -24,8 +41,18 @@ pub struct OcrConfig {
     /// `picture` = the translation engine reads the picture itself (one step),
     /// `local` = a local HTTP OCR service (Umi-OCR and compatible servers).
     pub provider: String,
+    /// Which built-in vendor the vision engine is set up for (preset id such as
+    /// `nvidia` / `deepseek`); empty = hand-filled, kept under `custom`.
+    pub vendor: String,
+    /// One entry per vendor, so each keeps its own endpoint, key and model.
+    pub profiles: BTreeMap<String, OcrProfile>,
+    /// Address of the local OCR service. The vision engine keeps its endpoint in
+    /// `profiles`; this flat field is the fallback for configs written before
+    /// per-vendor profiles existed.
     pub base_url: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub api_key: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub model: String,
     /// Windows OCR language tag ("zh-Hans", "en-US", …); empty = user profile.
     pub language: String,
@@ -35,10 +62,38 @@ pub struct OcrConfig {
     pub prompt: String,
 }
 
+/// Endpoint, key and model of one vision vendor. Keeping them apart is what
+/// stops one service's API key from turning up in another service's form.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct OcrProfile {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+}
+
+impl Default for OcrProfile {
+    fn default() -> Self {
+        Self {
+            base_url: String::new(),
+            api_key: String::new(),
+            model: String::new(),
+        }
+    }
+}
+
+impl OcrProfile {
+    pub fn is_blank(&self) -> bool {
+        self.base_url.trim().is_empty() && self.api_key.trim().is_empty() && self.model.trim().is_empty()
+    }
+}
+
 impl Default for OcrConfig {
     fn default() -> Self {
         Self {
             provider: "winocr".into(),
+            vendor: String::new(),
+            profiles: BTreeMap::new(),
             base_url: DEFAULT_OPENAI_BASE_URL.into(),
             api_key: String::new(),
             model: String::new(),
@@ -46,6 +101,52 @@ impl Default for OcrConfig {
             one_shot: false,
             prompt: String::new(),
         }
+    }
+}
+
+impl OcrConfig {
+    /// Where the active vendor's settings live. Hand-filled ones use `custom`.
+    pub fn key(&self) -> String {
+        let vendor = self.vendor.trim();
+        if vendor.is_empty() {
+            "custom".to_string()
+        } else {
+            vendor.to_string()
+        }
+    }
+
+    /// Settings of one vendor; a missing entry yields blanks.
+    pub fn profile(&self, id: &str) -> OcrProfile {
+        self.profiles.get(id).cloned().unwrap_or_default()
+    }
+
+    /// Mutable settings of one vendor, created on first use.
+    pub fn profile_mut(&mut self, id: &str) -> &mut OcrProfile {
+        self.profiles.entry(id.to_string()).or_default()
+    }
+
+    /// Endpoint, key and model the vision engine will actually use. When no
+    /// vendor is picked, fall back to the flat fields so configs written before
+    /// vendors existed keep working; a picked vendor never borrows them.
+    pub fn active(&self) -> OcrProfile {
+        let mut profile = if self.vendor.trim().is_empty() {
+            let custom = self.profile("custom");
+            if custom.is_blank() {
+                OcrProfile {
+                    base_url: self.base_url.clone(),
+                    api_key: self.api_key.clone(),
+                    model: self.model.clone(),
+                }
+            } else {
+                custom
+            }
+        } else {
+            self.profile(&self.key())
+        };
+        if profile.base_url.trim().is_empty() {
+            profile.base_url = DEFAULT_OPENAI_BASE_URL.to_string();
+        }
+        profile
     }
 }
 
@@ -123,10 +224,14 @@ impl TranslateProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TranslateConfig {
-    /// `openai` | `deepl` | `microsoft` | `google` | `youdao` | `youdao-llm`
+    /// `openai` | `deepl` | `microsoft` | `google` | `youdao`
     /// | `baidu` | `tencent` | `none`
     pub provider: String,
-    /// One entry per engine, keyed by provider id.
+    /// Which built-in vendor the LLM channel talks to (preset id such as
+    /// `nvidia` / `deepseek` / `opencode`); empty = hand-filled. Credentials are
+    /// stored per vendor, so switching vendors switches the whole set.
+    pub vendor: String,
+    /// One entry per vendor (LLM channel) or engine (everything else).
     pub profiles: BTreeMap<String, TranslateProfile>,
     pub target_lang: String,
     pub deepl_plan: String,
@@ -156,6 +261,19 @@ pub struct TranslateConfig {
 }
 
 impl TranslateConfig {
+    /// Where the active credentials live: the chosen vendor when there is one,
+    /// otherwise the engine itself (cloud engines have a single slot each).
+    pub fn key(&self) -> String {
+        let vendor = self.vendor.trim();
+        // Only the OpenAI-compatible channel hosts several vendors; every other
+        // engine has exactly one slot, so its own name is the key.
+        if self.provider == "openai" && !vendor.is_empty() {
+            vendor.to_string()
+        } else {
+            self.provider.clone()
+        }
+    }
+
     /// Settings of one engine; a missing entry yields blanks.
     pub fn profile(&self, id: &str) -> TranslateProfile {
         self.profiles.get(id).cloned().unwrap_or_default()
@@ -168,7 +286,7 @@ impl TranslateConfig {
 
     /// Settings of the engine that is currently selected.
     pub fn active(&self) -> TranslateProfile {
-        self.profile(&self.provider)
+        self.profile(&self.key())
     }
 }
 
@@ -185,6 +303,7 @@ impl Default for TranslateConfig {
         );
         Self {
             provider: "openai".into(),
+            vendor: String::new(),
             profiles,
             target_lang: "zh-CN".into(),
             deepl_plan: "free".into(),
@@ -371,15 +490,35 @@ impl AppConfig {
             self.ui.theme = "system".into();
         }
         self.history.limit = self.history.limit.clamp(0, 1000);
-        if self.ocr.base_url.trim().is_empty() {
-            self.ocr.base_url = DEFAULT_OPENAI_BASE_URL.into();
+        self.ocr.vendor = vendor_id(&self.ocr.vendor);
+        self.translate.vendor = vendor_id(&self.translate.vendor);
+        // Vision settings from before per-vendor profiles were flat fields. Move
+        // them into the `custom` slot: nothing the user typed is lost, and a
+        // freshly picked vendor starts with its own (empty) credential slot.
+        let legacy_vision = OcrProfile {
+            base_url: std::mem::take(&mut self.ocr.base_url),
+            api_key: std::mem::take(&mut self.ocr.api_key),
+            model: std::mem::take(&mut self.ocr.model),
+        };
+        if !legacy_vision.is_blank() && self.ocr.profile("custom").is_blank() {
+            *self.ocr.profile_mut("custom") = legacy_vision.clone();
         }
-        // Switching to the local service should not leave the OpenAI endpoint
-        // behind just because it used to be the default.
-        if self.ocr.provider == "local" && self.ocr.base_url == DEFAULT_OPENAI_BASE_URL {
-            self.ocr.base_url = DEFAULT_LOCAL_OCR_URL.into();
+        // The flat address is still what the local OCR engine reads.
+        self.ocr.base_url = if self.ocr.provider == "local" {
+            if legacy_vision.base_url.trim().is_empty() {
+                DEFAULT_LOCAL_OCR_URL.to_string()
+            } else {
+                legacy_vision.base_url.clone()
+            }
+        } else {
+            String::new()
+        };
+        self.ocr.base_url = self.ocr.base_url.trim().trim_end_matches('/').to_string();
+        for p in self.ocr.profiles.values_mut() {
+            p.base_url = p.base_url.trim().trim_end_matches('/').to_string();
+            p.api_key = p.api_key.trim().to_string();
+            p.model = p.model.trim().to_string();
         }
-        self.ocr.base_url = self.ocr.base_url.trim_end_matches('/').to_string();
         // Configs written before per-engine profiles carried a single flat set of
         // credentials. Fold them into the profile of the engine that was selected
         // so nothing the user already typed is lost.
@@ -475,8 +614,11 @@ impl AppConfig {
             "winocr" => true,
             // Local HTTP OCR service: the endpoint is all we need.
             "local" => !self.ocr.base_url.trim().is_empty(),
-            // Multimodal model: needs credentials.
-            _ => !self.ocr.api_key.trim().is_empty() && !self.ocr.model.trim().is_empty(),
+            // Multimodal model: needs the active vendor's credentials.
+            _ => {
+                let p = self.ocr.active();
+                !p.api_key.trim().is_empty() && !p.model.trim().is_empty()
+            }
         }
     }
 
@@ -582,11 +724,57 @@ mod tests {
         cfg.translate.deepl_plan = "enterprise".into();
         cfg.sanitize();
         assert_eq!(cfg.shortcut, DEFAULT_SHORTCUT);
-        assert_eq!(cfg.ocr.base_url, "https://x.dev/v1");
+        // The old flat vision field moves into the hand-filled vendor slot.
+        assert_eq!(cfg.ocr.profile("custom").base_url, "https://x.dev/v1");
+        assert!(cfg.ocr.base_url.is_empty());
         assert_eq!(cfg.capture.max_image_side, 4096);
         assert_eq!(cfg.ui.result_font_size, 11);
         assert_eq!(cfg.history.limit, 1000);
         assert_eq!(cfg.translate.deepl_plan, "free");
+    }
+
+    #[test]
+    fn credentials_are_kept_per_vendor() {
+        let mut cfg = AppConfig::default();
+
+        // Two vendors inside the LLM channel keep their own key and model.
+        cfg.translate.provider = "openai".into();
+        cfg.translate.vendor = "nvidia".into();
+        *cfg.translate.profile_mut("nvidia") = TranslateProfile {
+            api_key: "nv-key".into(),
+            model: "nv-model".into(),
+            ..Default::default()
+        };
+        cfg.translate.vendor = "deepseek".into();
+        assert_eq!(cfg.translate.key(), "deepseek");
+        assert!(cfg.translate.active().api_key.is_empty());
+        cfg.translate.vendor = "nvidia".into();
+        assert_eq!(cfg.translate.active().api_key, "nv-key");
+        // Cloud engines have a single slot; a vendor left over from the LLM
+        // channel must not be used for them.
+        cfg.translate.provider = "deepl".into();
+        assert_eq!(cfg.translate.key(), "deepl");
+
+        // Vision vendors are separated the same way.
+        cfg.ocr.provider = "vision".into();
+        cfg.ocr.vendor = "nvidia".into();
+        *cfg.ocr.profile_mut("nvidia") = OcrProfile {
+            base_url: "https://n.example/v1".into(),
+            api_key: "ocr-key".into(),
+            model: "vl".into(),
+        };
+        cfg.ocr.vendor = "deepseek".into();
+        assert!(cfg.ocr.active().api_key.is_empty());
+        assert_eq!(cfg.ocr.active().base_url, DEFAULT_OPENAI_BASE_URL);
+
+        // Without a picked vendor the flat legacy fields still win.
+        cfg.ocr.vendor = String::new();
+        cfg.ocr.profile_mut("custom").api_key.clear();
+        cfg.ocr.api_key = "flat-key".into();
+        cfg.ocr.base_url = "https://flat.example/v1".into();
+        let active = cfg.ocr.active();
+        assert_eq!(active.api_key, "flat-key");
+        assert_eq!(active.base_url, "https://flat.example/v1");
     }
 
     #[test]

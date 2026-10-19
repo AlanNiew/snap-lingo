@@ -65,6 +65,16 @@ impl Providers {
         target_lang: &str,
         one_shot: bool,
     ) -> Result<(String, Option<String>)> {
+        // Vision credentials live per vendor. Fold the active vendor's endpoint,
+        // key and model into a local view so the request always uses its own set
+        // (and never another vendor's leftovers).
+        let picked = cfg.active();
+        let mut scoped = cfg.clone();
+        scoped.base_url = picked.base_url;
+        scoped.api_key = picked.api_key;
+        scoped.model = picked.model;
+        let cfg = &scoped;
+
         require_key(&cfg.api_key, "OCR / 视觉模型")?;
         if cfg.model.trim().is_empty() {
             bail!("尚未配置 OCR 模型名称。");
@@ -1397,7 +1407,7 @@ pub fn ocr_endpoint(ocr: &OcrConfig) -> Option<String> {
     match ocr.provider.as_str() {
         "local" => local_ocr_url(ocr).ok(),
         "vision" => {
-            let root = default_or(&ocr.base_url, DEFAULT_OPENAI_BASE_URL);
+            let root = default_or(&ocr.active().base_url, DEFAULT_OPENAI_BASE_URL);
             Some(format!("{root}/chat/completions"))
         }
         _ => None,

@@ -13,12 +13,14 @@ import {
   type ProfileField,
 } from "../lib/labels";
 import {
+  EMPTY_OCR_PROFILE,
   EMPTY_PROFILE,
   type AppConfig,
   type ConnectionCheck,
   type EndpointInfo,
   type HistoryItem,
   type LogFile,
+  type OcrProfile,
   type OcrProvider,
   type ProviderPreset,
   type TranslateProfile,
@@ -341,6 +343,50 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
   const setOcr = (patchOcr: Partial<AppConfig["ocr"]>, immediate = false) =>
     patch((cfg) => ({ ...cfg, ocr: { ...cfg.ocr, ...patchOcr } }), immediate);
 
+  // Vision credentials are kept per vendor, so picking another vendor switches
+  // the address, model and key together instead of reusing the previous ones.
+  const ocrKey = config.ocr.vendor || "custom";
+  const ocrProfile = config.ocr.profiles?.[ocrKey] ?? EMPTY_OCR_PROFILE;
+  const setOcrProfile = (next: Partial<OcrProfile>, immediate = false) =>
+    patch((cfg) => {
+      const current = cfg.ocr.profiles?.[ocrKey] ?? EMPTY_OCR_PROFILE;
+      return {
+        ...cfg,
+        ocr: {
+          ...cfg.ocr,
+          profiles: { ...cfg.ocr.profiles, [ocrKey]: { ...current, ...next } },
+        },
+      };
+    }, immediate);
+
+  const pickVisionVendor = (preset: ProviderPreset) => {
+    patch((cfg) => {
+      const key = preset.id;
+      const existing = cfg.ocr.profiles?.[key] ?? EMPTY_OCR_PROFILE;
+      const legacy = cfg.ocr.profiles?.[cfg.ocr.vendor || "custom"] ?? EMPTY_OCR_PROFILE;
+      // Same address as before? Then the old key belongs to this vendor too.
+      const sameAddress =
+        legacy.apiKey.trim().length > 0 &&
+        legacy.baseUrl.trim().replace(/\/+$/, "") === preset.baseUrl.trim().replace(/\/+$/, "");
+      return {
+        ...cfg,
+        ocr: {
+          ...cfg.ocr,
+          vendor: key,
+          profiles: {
+            ...cfg.ocr.profiles,
+            [key]: {
+              baseUrl: preset.baseUrl,
+              model: preset.visionModel,
+              apiKey: existing.apiKey || (sameAddress ? legacy.apiKey : ""),
+            },
+          },
+        },
+      };
+    }, true);
+    notify(`${preset.label} · ${preset.visionModel}`, false);
+  };
+
   const runProbe = async () => {
     setProbing(true);
     try {
@@ -382,15 +428,15 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
           />
         </Row>
         {provider === "vision" ? (
-          <PresetPicker
-            presets={PRESETS}
-            unavailable={(preset) => !preset.visionModel}
-            currentUrl={config.ocr.baseUrl}
-            onPick={(preset) => {
-              setOcr({ baseUrl: preset.baseUrl, model: preset.visionModel }, true);
-              notify(`${preset.label} · ${preset.visionModel}`, false);
-            }}
-          />
+          <>
+            <PresetPicker
+              presets={PRESETS}
+              unavailable={(preset) => !preset.visionModel}
+              currentUrl={ocrProfile.baseUrl}
+              onPick={pickVisionVendor}
+            />
+            <div className="note">{t("vendorNote")}</div>
+          </>
         ) : (
           <div className="note">{t("presetNote")}</div>
         )}
@@ -443,10 +489,10 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
           <Card title={t("endpointBaseUrl")}>
             <EndpointFields
               kind="ocr"
-              baseUrl={config.ocr.baseUrl}
-              apiKey={config.ocr.apiKey}
-              model={config.ocr.model}
-              set={(next) => setOcr(next, false)}
+              baseUrl={ocrProfile.baseUrl}
+              apiKey={ocrProfile.apiKey}
+              model={ocrProfile.model}
+              set={(next) => setOcrProfile(next, false)}
             />
             <EndpointHint config={config} kind="ocr" />
           </Card>
@@ -558,27 +604,59 @@ export function TranslateSection({ config, patch, notify }: Base) {
   const { t } = useT();
   const provider = config.translate.provider;
   const meta = engineMeta(provider);
-  const profile = config.translate.profiles?.[provider] ?? EMPTY_PROFILE;
+  // The LLM channel hosts several vendors, and each keeps its own credentials.
+  const profileKey =
+    provider === "openai" && config.translate.vendor ? config.translate.vendor : provider;
+  const profile = config.translate.profiles?.[profileKey] ?? EMPTY_PROFILE;
   const has = (field: ProfileField) => (meta?.fields ?? []).includes(field);
 
   const setTranslate = (next: Partial<AppConfig["translate"]>, immediate = false) =>
     patch((cfg) => ({ ...cfg, translate: { ...cfg.translate, ...next } }), immediate);
 
   /**
-   * Writes into the selected engine's own profile. Keeping them apart is what
+   * Writes into the selected vendor's own profile. Keeping them apart is what
    * stops a key typed for one service from showing up under another one.
    */
   const setProfile = (next: Partial<TranslateProfile>, immediate = false) =>
     patch((cfg) => {
-      const current = cfg.translate.profiles?.[provider] ?? EMPTY_PROFILE;
+      const current = cfg.translate.profiles?.[profileKey] ?? EMPTY_PROFILE;
       return {
         ...cfg,
         translate: {
           ...cfg.translate,
-          profiles: { ...cfg.translate.profiles, [provider]: { ...current, ...next } },
+          profiles: { ...cfg.translate.profiles, [profileKey]: { ...current, ...next } },
         },
       };
     }, immediate);
+
+  /** Choosing a built-in vendor switches the whole credential set at once. */
+  const pickVendor = (preset: ProviderPreset) => {
+    patch((cfg) => {
+      const key = preset.id;
+      const existing = cfg.translate.profiles?.[key] ?? EMPTY_PROFILE;
+      const legacy = cfg.translate.profiles?.[cfg.translate.provider] ?? EMPTY_PROFILE;
+      const sameAddress =
+        legacy.apiKey.trim().length > 0 &&
+        legacy.baseUrl.trim().replace(/\/+$/, "") === preset.baseUrl.trim().replace(/\/+$/, "");
+      return {
+        ...cfg,
+        translate: {
+          ...cfg.translate,
+          vendor: key,
+          profiles: {
+            ...cfg.translate.profiles,
+            [key]: {
+              ...existing,
+              baseUrl: preset.baseUrl,
+              model: preset.textModel,
+              apiKey: existing.apiKey || (sameAddress ? legacy.apiKey : ""),
+            },
+          },
+        },
+      };
+    }, true);
+    notify(`${preset.label} · ${preset.textModel}`, false);
+  };
 
   const secretLabel =
     provider === "youdao"
@@ -614,15 +692,15 @@ export function TranslateSection({ config, patch, notify }: Base) {
           </Row>
         ) : null}
         {provider === "openai" ? (
-          <PresetPicker
-            presets={PRESETS}
-            unavailable={(preset) => !preset.textModel}
-            currentUrl={profile.baseUrl}
-            onPick={(preset) => {
-              setProfile({ baseUrl: preset.baseUrl, model: preset.textModel }, true);
-              notify(`${preset.label} · ${preset.textModel}`, false);
-            }}
-          />
+          <>
+            <PresetPicker
+              presets={PRESETS}
+              unavailable={(preset) => !preset.textModel}
+              currentUrl={profile.baseUrl}
+              onPick={pickVendor}
+            />
+            <div className="note">{t("vendorNote")}</div>
+          </>
         ) : provider !== "none" ? (
           <div className="note">{t("presetNote")}</div>
         ) : null}

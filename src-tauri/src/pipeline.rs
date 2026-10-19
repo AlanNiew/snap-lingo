@@ -659,10 +659,10 @@ async fn recognize(
 
 fn provider_labels(cfg: &AppConfig) -> (String, String) {
     match cfg.ocr.provider.as_str() {
-        "vision" => (
-            format!("vision:{}", short(&cfg.ocr.model)),
-            cfg.ocr.model.clone(),
-        ),
+        "vision" => {
+            let model = cfg.ocr.active().model;
+            (format!("vision:{}", short(&model)), model)
+        }
         "local" => {
             let host = host_of(&cfg.ocr.base_url);
             (format!("local:{host}"), format!("本地 OCR ({host})"))
