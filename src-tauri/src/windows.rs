@@ -9,13 +9,19 @@
 
 use crate::capture::MonitorFrame;
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder,
 };
 
 pub const SETTINGS: &str = "settings";
 pub const RESULT: &str = "result";
+pub const TOAST: &str = "toast";
 pub const OVERLAY_PREFIX: &str = "overlay-";
+
+/// Size and screen margin of the in-app notice (physical pixels at 100% DPI).
+pub const TOAST_WIDTH: f64 = 400.0;
+pub const TOAST_HEIGHT: f64 = 150.0;
+const TOAST_MARGIN: i32 = 18;
 
 /// The overlay preview is capped so a 4K frame does not become a ~20 MB IPC
 /// payload. Selection accuracy is unaffected: the user's rectangle is mapped
@@ -92,6 +98,73 @@ pub fn show_result(app: &AppHandle) {
             let _ = window.set_focus();
         }
         Err(err) => log::error!("无法打开结果窗口: {err}"),
+    }
+}
+
+/* ---------------------------------------------------------- notice ("toast") */
+
+/// Our own, branded notice window.
+///
+/// Windows' native toasts only carry the app's identity when the app was
+/// installed (and is not running from a `target/…` folder), so a dev build used
+/// to pop up as “Windows PowerShell”. Drawing the notice ourselves keeps the
+/// name, icon and theme right in every build, and it can point at the log page.
+pub fn toast_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(window) = app.get_webview_window(TOAST) {
+        return Ok(window);
+    }
+    WebviewWindowBuilder::new(app, TOAST, WebviewUrl::App("toast.html".into()))
+        .title("SnapLingo")
+        .inner_size(TOAST_WIDTH, TOAST_HEIGHT)
+        .decorations(false)
+        .shadow(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .closable(false)
+        .visible(false)
+        // Never steal focus: the notice must not interrupt typing.
+        .focused(false)
+        .build()
+}
+
+/// Move the notice into the bottom-right corner of the monitor the cursor is on.
+fn place_toast(app: &AppHandle, window: &WebviewWindow) {
+    let monitor = app
+        .cursor_position()
+        .ok()
+        .and_then(|point| app.monitor_from_point(point.x, point.y).ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten());
+
+    let Some(monitor) = monitor else {
+        return;
+    };
+
+    let area = monitor.work_area();
+    let x = area.position.x + area.size.width as i32 - TOAST_WIDTH as i32 - TOAST_MARGIN;
+    let y = area.position.y + area.size.height as i32 - TOAST_HEIGHT as i32 - TOAST_MARGIN;
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
+/// Show (or refresh) the branded notice. `payload` is what the page renders.
+pub fn show_toast(app: &AppHandle, payload: serde_json::Value) {
+    let window = match toast_window(app) {
+        Ok(window) => window,
+        Err(err) => {
+            log::error!("无法创建通知窗口: {err}");
+            return;
+        }
+    };
+    place_toast(app, &window);
+    let _ = window.emit(crate::pipeline::TOAST_EVENT, payload);
+    let _ = window.show();
+}
+
+pub fn hide_toast(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(TOAST) {
+        let _ = window.hide();
     }
 }
 
@@ -175,6 +248,9 @@ pub fn prewarm(app: &AppHandle) {
     if let Err(err) = result_window(app) {
         log::warn!("预创建结果窗口失败: {err}");
     }
+    if let Err(err) = toast_window(app) {
+        log::warn!("预创建通知窗口失败: {err}");
+    }
 }
 
 /// Warm the primary monitor's overlay a moment after startup: late enough that
@@ -224,7 +300,7 @@ pub fn hide_overlays(app: &AppHandle) {
 
 /// Hide our own windows so they cannot end up inside the screenshot.
 pub fn hide_transient(app: &AppHandle) {
-    for label in [SETTINGS, RESULT] {
+    for label in [SETTINGS, RESULT, TOAST] {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.hide();
         }

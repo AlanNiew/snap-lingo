@@ -144,11 +144,11 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
         ID_CANCEL => pipeline::cancel_capture(app),
         ID_HISTORY => {
             windows::show_settings(app);
-            let _ = app.emit("ui:navigate", "history");
+            let _ = app.emit(crate::pipeline::NAVIGATE_EVENT, "history");
         }
         ID_LOGS => {
             windows::show_settings(app);
-            let _ = app.emit("ui:navigate", "logs");
+            let _ = app.emit(crate::pipeline::NAVIGATE_EVENT, "logs");
         }
         ID_SETTINGS => windows::show_settings(app),
         ID_AUTOSTART => {

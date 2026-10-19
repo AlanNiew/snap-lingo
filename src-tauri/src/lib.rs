@@ -145,7 +145,7 @@ fn supervise(app: tauri::AppHandle) {
         );
         pipeline::notify(
             &app,
-            "SnapLingo 已自动退出",
+            "notice",
             "截图流程卡住了，程序为避免继续占用屏幕已自动退出，重新打开即可。",
         );
         std::thread::sleep(Duration::from_millis(400));
@@ -182,7 +182,6 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -298,6 +297,8 @@ pub fn run() {
             commands::delete_history_item,
             commands::open_settings,
             commands::hide_settings,
+            commands::hide_toast,
+            commands::open_logs,
             commands::open_external,
         ]);
 

@@ -38,6 +38,12 @@ export interface OcrLanguage {
   name: string;
 }
 
+/** Payload of `toast:changed` — `kind` is `"error"` or `"notice"`. */
+export interface Notice {
+  kind: string;
+  message: string;
+}
+
 /* ------------------------------------------------------------------- events */
 
 export const EVENTS = {
@@ -47,6 +53,7 @@ export const EVENTS = {
   hotkeyError: "hotkey:error",
   navigate: "ui:navigate",
   session: "session:changed",
+  toast: "toast:changed",
 } as const;
 
 export const api = {
@@ -91,6 +98,8 @@ export const api = {
   /* shell */
   openSettings: () => invoke<void>("open_settings"),
   hideSettings: () => invoke<void>("hide_settings"),
+  hideToast: () => invoke<void>("hide_toast"),
+  openLogs: () => invoke<void>("open_logs"),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   revealConfigDir: () => invoke<void>("reveal_config_dir"),
   openGuide: () => invoke<void>("open_guide"),
@@ -126,6 +135,11 @@ export function onHotkeyError(handler: (message: string) => void): Promise<Unlis
 /** Fires in a warm overlay when a new capture has been frozen for its monitor. */
 export function onSession(handler: (monitorId: number) => void): Promise<UnlistenFn> {
   return listen<number>(EVENTS.session, (event) => handler(event.payload));
+}
+
+/** The branded notice window: what to say, and whether it is a failure. */
+export function onToast(handler: (notice: Notice) => void): Promise<UnlistenFn> {
+  return listen<Notice>(EVENTS.toast, (event) => handler(event.payload));
 }
 
 /* ------------------------------------------------------------------ helpers */
