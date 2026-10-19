@@ -223,7 +223,11 @@ const STRINGS = {
     "Recognition and translation were done by the translation service in one call; the local OCR engine was not used.",
   ],
   targetLang: ["目标语言", "Target language"],
-  targetLangHint: ["识别出的文字会被翻译成该语言。", "Recognised text is translated into this language."],
+  targetLangHint: [
+    "识别出的文字会被翻译成该语言。选「智能判断」时：原文主要是中文就译成英文，否则译成中文。",
+    "Recognised text is translated into this language. Smart mode translates Chinese into English and everything else into Chinese.",
+  ],
+  targetAuto: ["智能判断", "Smart"],
   advanced: ["高级选项", "Advanced"],
   customPrompt: ["自定义提示词", "Custom prompt"],
   customPromptHint: [

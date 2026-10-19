@@ -1223,6 +1223,28 @@ body.result-body {
   background: var(--surface-2);
 }
 
+/* Quick target-language switch, kept next to the view toggle so the direction
+   can be changed without opening the settings window. */
+.result-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.result-lang-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.result-lang .select {
+  height: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+  max-width: 132px;
+}
+
 .result-foot .spacer {
   flex: 1;
 }

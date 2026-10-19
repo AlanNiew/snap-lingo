@@ -307,7 +307,7 @@ impl Providers {
         if cfg.model.trim().is_empty() {
             bail!("尚未配置翻译模型名称。");
         }
-        let target = language_name(&cfg.target_lang);
+            let target = target_phrase(&cfg.target_lang);
         let system = translate_system(&cfg.prompt, &target);
 
         let mut out = Vec::new();
@@ -1799,8 +1799,9 @@ fn ocr_system(custom: &str) -> String {
 }
 
 fn one_shot_system(target: &str) -> String {
+    let phrase = target_phrase(target);
     format!(
-        "你是一个截图翻译引擎。请识别图片中的文字，并翻译成{target}。\n\
+        "你是一个截图翻译引擎。请识别图片中的文字，并翻译成{phrase}。\n\
          只输出一个 JSON 对象，不要输出任何其他内容，格式为：\n\
          {{\"source\":\"识别出的原文\",\"translation\":\"译文\"}}\n\
          要求：原文保留换行；译文准确、自然、符合目标语言习惯；\
@@ -1824,6 +1825,79 @@ fn translate_system(custom: &str, target: &str) -> String {
 }
 
 /// Human-readable target language name used inside prompts.
+/// True when the configured target asks the pipeline to decide for us.
+pub fn is_auto_target(target: &str) -> bool {
+    let wanted = target.trim();
+    wanted.is_empty() || wanted.eq_ignore_ascii_case("auto")
+}
+
+/// Share of tokens that must be Han before we treat a snippet as Chinese.
+const HAN_RATIO: f32 = 0.15;
+
+/// Cheap guess at the language of a recognised snippet.
+///
+/// Every engine detects the *source* language itself (we send `auto`); this
+/// exists only so [`resolve_target`] can pick a sensible target, which a
+/// character-class count handles well enough — kana and hangul first, then Han.
+pub fn detect_source(text: &str) -> &'static str {
+    let mut han = 0usize;
+    let mut kana = 0usize;
+    let mut hangul = 0usize;
+    let mut letters = 0usize;
+    for ch in text.chars() {
+        let code = ch as u32;
+        if (0x3040..=0x30FF).contains(&code) {
+            kana += 1;
+        } else if (0x1100..=0x11FF).contains(&code) || (0xAC00..=0xD7AF).contains(&code) {
+            hangul += 1;
+        } else if (0x3400..=0x4DBF).contains(&code)
+            || (0x4E00..=0x9FFF).contains(&code)
+            || (0xF900..=0xFAFF).contains(&code)
+            || (0x20000..=0x2FA1F).contains(&code)
+        {
+            han += 1;
+        }
+        if ch.is_alphanumeric() {
+            letters += 1;
+        }
+    }
+    if kana > 0 {
+        return "ja";
+    }
+    if hangul > 0 {
+        return "ko";
+    }
+    if han > 0 && (letters == 0 || han as f32 / letters as f32 >= HAN_RATIO) {
+        return "zh-CN";
+    }
+    "en"
+}
+
+/// Resolve the target language for one run.
+///
+/// A concrete tag passes straight through. `auto` (or empty) means the smart
+/// direction: English when the text is already Chinese, Chinese otherwise — so
+/// 中译英 and 英译中 both work without touching the settings.
+pub fn resolve_target(text: &str, target: &str) -> String {
+    let wanted = target.trim();
+    if !is_auto_target(wanted) {
+        return wanted.to_string();
+    }
+    match detect_source(text) {
+        "zh-CN" | "zh-TW" => "en".to_string(),
+        _ => "zh-CN".to_string(),
+    }
+}
+
+/// Human phrase for a target tag, safe for prompts when the tag is `auto`.
+fn target_phrase(target: &str) -> String {
+    if is_auto_target(target) {
+        "自动判断的语言（识别出的原文主要是中文就译成英文，否则译成中文）".to_string()
+    } else {
+        language_name(target)
+    }
+}
+
 pub fn language_name(tag: &str) -> String {
     match tag.trim() {
         "zh-CN" | "zh" | "zh-Hans" | "zh-SG" => "简体中文",
@@ -2488,5 +2562,29 @@ mod tests {
             .contains("207"));
         // Nothing usable is an error too.
         assert!(parse_youdao_llm("data: {\"code\":\"0\",\"data\":{}}").is_err());
+    }
+
+    #[test]
+    fn smart_target_follows_the_source_language() {
+        // Chinese in → English out; everything else → Chinese.
+        assert_eq!(resolve_target("你好世界", "auto"), "en");
+        assert_eq!(resolve_target("拉赫玛尼诺夫 7", "auto"), "en");
+        assert_eq!(resolve_target("使用 Windows 系统 的同学", "auto"), "en");
+        assert_eq!(resolve_target("Hello world", "auto"), "zh-CN");
+        assert_eq!(resolve_target("Bonjour tout le monde", "auto"), "zh-CN");
+        assert_eq!(resolve_target("こんにちは", "auto"), "zh-CN");
+        assert_eq!(resolve_target("안녕하세요", "auto"), "zh-CN");
+        // An empty target means the same as `auto`.
+        assert_eq!(resolve_target("你好", ""), "en");
+        // A concrete choice is never overridden.
+        assert_eq!(resolve_target("你好", "ja"), "ja");
+        assert_eq!(resolve_target("Hello", "zh-TW"), "zh-TW");
+        // Detection on its own.
+        assert_eq!(detect_source("Hello"), "en");
+        assert_eq!(detect_source("中文"), "zh-CN");
+        assert_eq!(detect_source("ひらがな"), "ja");
+        assert_eq!(detect_source("한글"), "ko");
+        assert!(is_auto_target("AUTO"));
+        assert!(!is_auto_target("en"));
     }
 }

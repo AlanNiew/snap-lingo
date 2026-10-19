@@ -333,7 +333,7 @@ struct Job {
 
 async fn run_job(app: AppHandle, crop: RgbaImage) {
     let started = Instant::now();
-    let cfg = app.state::<AppState>().config();
+    let mut cfg = app.state::<AppState>().config();
     let providers = app.state::<AppState>().providers.clone();
     let preview = imageops::to_preview_data_url(&crop).ok();
     let (ocr_provider, model) = provider_labels(&cfg);
@@ -355,6 +355,10 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
         );
         match picture_translate(&cfg, &providers, &crop).await {
             Ok((source, translation)) => {
+                // Record the direction actually used, so the result header can
+                // show 中文/English instead of the raw `auto`.
+                cfg.translate.target_lang =
+                    providers::resolve_target(&source, &cfg.translate.target_lang);
                 let job = Job {
                     source: Some(source),
                     translation: Some(translation),
@@ -397,6 +401,9 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
 
     match recognize(&app, &cfg, &providers, &crop).await {
         Ok((source, inline_translation)) => {
+            // Smart target: decide from the recognised text before translating.
+            cfg.translate.target_lang =
+                providers::resolve_target(&source, &cfg.translate.target_lang);
             let mut job = Job {
                 source: Some(source.clone()),
                 translation: inline_translation,
@@ -443,15 +450,37 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
 
 /// One-step picture translation: encode the crop and let the selected cloud
 /// engine read it and translate it in a single call.
+///
+/// A smart target (`auto`) cannot be decided up front — the text only exists
+/// inside the picture service — so we start towards Chinese and, when the
+/// service reports that the source was Chinese after all, run once more towards
+/// English. Only that direction costs a second call.
 async fn picture_translate(
     cfg: &AppConfig,
     providers: &Providers,
     crop: &RgbaImage,
 ) -> Result<(String, String)> {
     let payload = ImagePayload::from_jpeg(encode_picture(crop, cfg.capture.jpeg_quality)?);
+    let auto = providers::is_auto_target(&cfg.translate.target_lang);
+    let first = call_image_translate(cfg, providers, &payload).await?;
+    if auto && matches!(providers::detect_source(&first.0), "zh-CN" | "zh-TW") {
+        let mut flipped = cfg.clone();
+        flipped.translate.target_lang = "en".to_string();
+        if let Ok(second) = call_image_translate(&flipped, providers, &payload).await {
+            return Ok(second);
+        }
+    }
+    Ok(first)
+}
+
+async fn call_image_translate(
+    cfg: &AppConfig,
+    providers: &Providers,
+    payload: &ImagePayload,
+) -> Result<(String, String)> {
     match tokio::time::timeout(
         IMAGE_TRANSLATE_TIMEOUT,
-        providers.image_translate(&cfg.translate, &payload),
+        providers.image_translate(&cfg.translate, payload),
     )
     .await
     {

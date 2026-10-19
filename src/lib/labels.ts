@@ -170,3 +170,65 @@ export const OCR_ENGINES: OcrEngine[] = [
     fields: [],
   },
 ];
+
+/* ================================================================== target */
+
+/**
+ * Target-language choices shared by the settings page and the result window.
+ *
+ * `auto` is the smart option: the pipeline looks at the recognised text and
+ * decides the target itself (Chinese in → English out, anything else → Chinese).
+ * Its label is empty on purpose — callers render `targetAuto` in the UI locale.
+ */
+export interface TargetLangOption {
+  value: string;
+  /** Native name of the language; empty for `auto`. */
+  label: string;
+}
+
+export const AUTO_TARGET = "auto";
+
+export const TARGET_LANGS: TargetLangOption[] = [
+  { value: AUTO_TARGET, label: "" },
+  { value: "zh-CN", label: "简体中文" },
+  { value: "zh-TW", label: "繁體中文" },
+  { value: "en", label: "English" },
+  { value: "ja", label: "日本語" },
+  { value: "ko", label: "한국어" },
+  { value: "fr", label: "Français" },
+  { value: "de", label: "Deutsch" },
+  { value: "es", label: "Español" },
+  { value: "ru", label: "Русский" },
+  { value: "pt", label: "Português" },
+  { value: "it", label: "Italiano" },
+  { value: "ar", label: "العربية" },
+  { value: "hi", label: "हिन्दी" },
+  { value: "th", label: "ไทย" },
+  { value: "vi", label: "Tiếng Việt" },
+  { value: "id", label: "Bahasa Indonesia" },
+  { value: "tr", label: "Türkçe" },
+];
+
+/** Native label for a target tag; `auto` and unknown tags come back as-is. */
+export function targetLabel(value: string): string {
+  const match = TARGET_LANGS.find((option) => option.value === value);
+  return match ? match.label || value : value;
+}
+
+/** Keep a stored value selectable even when it is not in the list. */
+export function withTarget(
+  options: TargetLangOption[],
+  current: string,
+): TargetLangOption[] {
+  if (!current || options.some((option) => option.value === current)) return options;
+  return [...options, { value: current, label: current }];
+}
+
+/**
+ * Label for a target tag in the UI language. `auto` has no native name, so the
+ * caller passes `t("targetAuto")` and this walks `TARGET_LANGS` as-is.
+ */
+export function targetOptionLabel(value: string, auto: string): string {
+  if (value === AUTO_TARGET) return auto;
+  return targetLabel(value);
+}
