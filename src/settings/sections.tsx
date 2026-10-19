@@ -583,7 +583,7 @@ export function TranslateSection({ config, patch, notify }: Base) {
     }, immediate);
 
   const secretLabel =
-    provider === "youdao" || provider === "youdao-llm"
+    provider === "youdao"
       ? t("secretYoudao")
       : provider === "baidu"
         ? t("secretBaidu")

@@ -7,7 +7,6 @@ export type TranslateProvider =
   | "microsoft"
   | "google"
   | "youdao"
-  | "youdao-llm"
   | "baidu"
   | "tencent"
   | "none";

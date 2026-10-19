@@ -108,10 +108,12 @@ impl TranslateProfile {
             // Baidu's standard text translation works for everyone; the LLM
             // service has to be activated separately.
             "baidu" => "standard",
-            // Youdao's and Tencent's picture translation are best on the LLM path.
-            "youdao" | "tencent" => "llm",
-            // The dedicated LLM channel is always on the pro model by default.
-            "youdao-llm" => "pro",
+            // Youdao: 通用文本翻译 by default (the only one that works without
+            // extra activation); `llm` picks 子曰 pro, `lite` picks 子曰 lite.
+            "youdao" => "standard",
+            // Tencent's picture translation is best on the LLM path, which is
+            // also its default product.
+            "tencent" => "llm",
             _ => "",
         }
         .to_string()
@@ -306,12 +308,45 @@ impl AppConfig {
                 | "microsoft"
                 | "google"
                 | "youdao"
-                | "youdao-llm"
                 | "baidu"
                 | "tencent"
                 | "none"
         ) {
-            self.translate.provider = "openai".into();
+            // Youdao's LLM translation used to be a channel of its own; it is now
+            // the `llm` tier of the Youdao channel. Same for the stored selection.
+            self.translate.provider = if self.translate.provider == "youdao-llm" {
+                "youdao".into()
+            } else {
+                "openai".into()
+            };
+        }
+        // Fold a left-over `youdao-llm` profile back into `youdao`, keeping the
+        // credentials the user already entered.
+        if let Some(old) = self.translate.profiles.remove("youdao-llm") {
+            let target = self.translate.profiles.entry("youdao".into()).or_default();
+            if target.api_key.trim().is_empty() {
+                target.api_key = old.api_key;
+            }
+            if target.api_secret.trim().is_empty() {
+                target.api_secret = old.api_secret;
+            }
+            if target.base_url.trim().is_empty() {
+                target.base_url = old.base_url;
+            }
+            if target.model_tier.trim().is_empty() {
+                target.model_tier = if old.model_tier.trim().is_empty() {
+                    "llm".into()
+                } else {
+                    old.model_tier
+                };
+            }
+        }
+        // `pro` was the old name of the Youdao LLM tier; the merged channel and
+        // the provider list both call it `llm` now.
+        if let Some(p) = self.translate.profiles.get_mut("youdao") {
+            if p.model_tier.trim() == "pro" {
+                p.model_tier = "llm".into();
+            }
         }
         if self.translate.deepl_plan != "pro" {
             self.translate.deepl_plan = "free".into();
@@ -381,8 +416,10 @@ impl AppConfig {
             p.region = p.region.trim().to_string();
             p.model = p.model.trim().to_string();
             // Unknown tiers fall back to the engine's own default at use time.
+            // `pro` no longer exists: it was the old Youdao LLM tier and is
+            // rewritten to `llm` above.
             p.model_tier = match p.model_tier.trim() {
-                "llm" | "lite" | "standard" | "pro" => p.model_tier.trim().to_string(),
+                "llm" | "lite" | "standard" => p.model_tier.trim().to_string(),
                 _ => String::new(),
             };
             p.auth = match p.auth.trim() {
@@ -439,7 +476,7 @@ impl AppConfig {
             "none" => true,
             "deepl" | "microsoft" | "google" => !p.api_key.trim().is_empty(),
             // These engines sign the request with a second credential.
-            "youdao" | "youdao-llm" | "tencent" => {
+            "youdao" | "tencent" => {
                 !p.api_key.trim().is_empty() && !p.api_secret.trim().is_empty()
             }
             // Baidu's LLM endpoint can also authenticate with a Bearer API Key,

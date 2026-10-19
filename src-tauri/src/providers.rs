@@ -169,7 +169,6 @@ impl Providers {
             "microsoft" => self.microsoft(cfg, text).await,
             "google" => self.google(cfg, text).await,
             "youdao" => self.youdao(cfg, text).await,
-            "youdao-llm" => self.youdao_llm(cfg, text).await,
             "baidu" => self.baidu(cfg, text).await,
             "tencent" => self.tencent(cfg, text).await,
             _ => self.translate_chat(cfg, text).await,
@@ -400,11 +399,11 @@ impl Providers {
         let curtime = (crate::model::now_ms() / 1000).to_string();
         let input = youdao_input(&image.base64);
         let sign = sha256_hex(&format!("{app_key}{input}{salt}{curtime}{key}"));
-        // 1 selects the LLM engine, 0 the general one.
-        let option = if cfg.model_tier.trim() == "llm" {
-            "1"
-        } else {
+        // 1 selects the LLM engine, 0 the general one; every LLM tier uses it.
+        let option = if cfg.model_tier.trim().is_empty() || cfg.model_tier.trim() == "standard" {
             "0"
+        } else {
+            "1"
         };
         let body = form_encode(&[
             ("type", "1"),
@@ -706,6 +705,11 @@ impl Providers {
 
     /// Youdao Zhiyun text translation. v3 signature over a form body.
     async fn youdao(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
+        // The `llm` / `lite` tiers are a different product of the same console:
+        // the streaming 子曰 LLM endpoint instead of the classic one.
+        if matches!(cfg.model_tier.trim(), "llm" | "lite") {
+            return self.youdao_llm(cfg, text).await;
+        }
         require_key(&cfg.api_key, "有道翻译")?;
         if cfg.api_secret.trim().is_empty() {
             bail!("有道翻译需要两项凭据：应用 ID 与应用密钥。");
@@ -1350,8 +1354,13 @@ pub fn text_endpoint(provider: &str, cfg: &TranslateConfig) -> Option<String> {
         }
         "microsoft" => own(MICROSOFT_ENDPOINT),
         "google" => own(GOOGLE_ENDPOINT),
-        "youdao" => own(YOUDAO_ENDPOINT),
-        "youdao-llm" => own(YOUDAO_LLM_ENDPOINT),
+        "youdao" => {
+            if matches!(profile.tier("youdao").as_str(), "llm" | "lite") {
+                YOUDAO_LLM_ENDPOINT.to_string()
+            } else {
+                own(YOUDAO_ENDPOINT)
+            }
+        }
         "baidu" => {
             if profile.tier("baidu") == "llm" {
                 BAIDU_LLM_ENDPOINT.to_string()
@@ -1407,24 +1416,21 @@ pub fn tier_note(provider: &str, tier: &str, image: bool) -> Option<String> {
             }
         }
         ("baidu", true) => "图片翻译接口固定，档位只影响文本翻译".to_string(),
-        ("youdao", false) => "档位只影响一步图片翻译（translateOption）".to_string(),
+        ("youdao", false) => match tier {
+            "llm" => "大模型翻译走 /proxy/http/llm-trans（handleOption=0，子曰翻译大模型 Pro）"
+                .to_string(),
+            "lite" => "大模型翻译走 /proxy/http/llm-trans（handleOption=3，子曰轻量版 Lite）"
+                .to_string(),
+            _ => "通用文本翻译走 /api（v3 签名）".to_string(),
+        },
         ("youdao", true) => format!(
             "translateOption={}",
-            if tier == "llm" {
-                "1（大模型译后编辑）"
-            } else {
+            if tier.is_empty() || tier == "standard" {
                 "0（传统翻译）"
-            }
-        ),
-        ("youdao-llm", false) => format!(
-            "handleOption={}（流式接口，自动取最终译文）",
-            if tier == "lite" {
-                "3（lite 轻量模型）"
             } else {
-                "0（pro 子曰翻译大模型）"
+                "1（大模型译后编辑）"
             }
         ),
-        ("youdao-llm", true) => "大模型翻译渠道不提供一步图片翻译".to_string(),
         ("tencent", false) => "档位只影响一步图片翻译（Mode）".to_string(),
         ("tencent", true) => format!(
             "Mode={}",
@@ -1862,7 +1868,6 @@ pub fn provider_label(provider: &str) -> &'static str {
         "microsoft" => "微软翻译",
         "google" => "谷歌翻译",
         "youdao" => "有道翻译",
-        "youdao-llm" => "有道大模型翻译",
         "baidu" => "百度翻译",
         "tencent" => "腾讯翻译",
         "winocr" => "Windows 离线 OCR",
