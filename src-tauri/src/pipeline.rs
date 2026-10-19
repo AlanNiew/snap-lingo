@@ -62,7 +62,7 @@ fn emit_stage(app: &AppHandle, stage: Stage, message: Option<&str>, elapsed_ms: 
         elapsed_ms,
     };
     if let Err(err) = app.emit(STAGE_EVENT, event) {
-        log::warn!("stage 事件发送失败: {err}");
+        log::error!("stage 事件发送失败: {err}");
     }
 }
 
@@ -176,7 +176,7 @@ pub async fn begin_capture(app: AppHandle) {
                 // overlay filters on its own monitor id anyway.
                 let _ = app.emit(SESSION_EVENT, *id);
             }
-            Err(err) => log::warn!("创建截图覆盖层失败（显示器 {id}）: {err}"),
+            Err(err) => log::error!("创建截图覆盖层失败（显示器 {id}）: {err}"),
         }
     }
 
@@ -266,7 +266,7 @@ pub fn finish_selection(app: &AppHandle, rect: SelectionRect) {
 
     let state = app.state::<AppState>();
     let Some(crop) = state.crop_selection(&rect) else {
-        log::warn!("选区无法从缓存帧裁切（显示器 {}）", rect.monitor_id);
+        log::error!("选区无法从缓存帧裁切（显示器 {}）", rect.monitor_id);
         cancel_capture(app);
         return;
     };
@@ -380,7 +380,7 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
                 // The one-step service refused the job (service not opened,
                 // quota, …) but a local OCR path exists: fall through to it so
                 // the capture still produces something useful.
-                log::warn!("一步图片翻译失败（{err:#}），改用本机识别 + 文本翻译");
+                log::error!("一步图片翻译失败（{err:#}），改用本机识别 + 文本翻译");
                 emit_stage(
                     &app,
                     Stage::Ocr,
@@ -617,7 +617,7 @@ fn publish(app: &AppHandle, cfg: &AppConfig, job: Job, preview: Option<String>, 
     // dismissed before the user gets to read it.
     match payload.error.as_deref() {
         Some(err) => {
-            log::warn!("SnapLingo: 处理失败 — {err}");
+            log::error!("SnapLingo: 处理失败 — {err}");
             notify(app, "SnapLingo 处理失败", err);
         }
         None => log::info!(
@@ -634,7 +634,7 @@ fn publish(app: &AppHandle, cfg: &AppConfig, job: Job, preview: Option<String>, 
 
     windows::show_result(app);
     if let Err(err) = app.emit(RESULT_EVENT, payload.clone()) {
-        log::warn!("result 事件发送失败: {err}");
+        log::error!("result 事件发送失败: {err}");
     }
     emit_stage(
         app,
@@ -662,7 +662,7 @@ fn fail(app: &AppHandle, message: &str) {
     windows::show_result(app);
     let _ = app.emit(RESULT_EVENT, payload);
     emit_stage(app, Stage::Error, Some(message), 0);
-    log::warn!("SnapLingo: {message}");
+    log::error!("SnapLingo: {message}");
     notify(app, "SnapLingo 没能完成这次操作", message);
 }
 

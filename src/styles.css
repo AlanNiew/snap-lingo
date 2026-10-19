@@ -1247,6 +1247,40 @@ body.result-body {
   margin: 10px 0;
 }
 
+.logs-levels {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  flex-wrap: wrap;
+}
+
+.logs-level {
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.logs-level.on {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.logs-level.error.on {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.logs-level.warn.on {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
 .logs-view {
   max-height: 46vh;
   overflow: auto;

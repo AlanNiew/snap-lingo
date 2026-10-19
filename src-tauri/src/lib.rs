@@ -72,14 +72,18 @@ impl log::Log for FileLogger {
     fn flush(&self) {}
 }
 
-/// `HH:MM:SS` in UTC — enough to correlate events with a clock, without
-/// pulling in a date/time library for it.
+/// `YYYY-MM-DD HH:MM:SS` in the machine's own time zone: reading the log while
+/// debugging a run is much easier when the clock matches the wall clock.
 fn timestamp() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("{:02}:{:02}:{:02}Z", (secs / 3600) % 24, (secs / 60) % 60, secs % 60)
+    // `::windows` — the leading colons pick the Win32 crate, not our own
+    // `crate::windows` module of the same name.
+    use ::windows::Win32::System::SystemInformation::GetLocalTime;
+
+    let now = unsafe { GetLocalTime() };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond
+    )
 }
 
 fn init_logging(dir: &Path) {
@@ -216,7 +220,7 @@ pub fn run() {
             match hotkey::apply(&handle, &shortcut) {
                 Ok(()) => log::info!("全局快捷键已注册: {shortcut}"),
                 Err(err) => {
-                    log::warn!("{err}");
+                    log::error!("全局快捷键注册失败: {err}");
                     // Not fatal: the tray menu still works. Tell the settings
                     // page so it can show the problem instead of pretending.
                     let _ = handle.emit("hotkey:error", err);
@@ -274,6 +278,7 @@ pub fn run() {
             commands::read_log,
             commands::clear_log,
             commands::reveal_log,
+            commands::open_guide,
             commands::ocr_languages,
             commands::ocr_probe,
             commands::reveal_config_dir,

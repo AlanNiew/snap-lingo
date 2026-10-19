@@ -188,7 +188,7 @@ fn save_history(path: &Path, items: &[HistoryItem]) {
         Ok(())
     };
     if let Err(err) = write() {
-        log::warn!("历史记录保存失败: {err:#}");
+        log::error!("历史记录保存失败: {err:#}");
     }
 }
 

@@ -238,9 +238,10 @@ pub fn describe_endpoints(config: AppConfig) -> Endpoints {
                 method: "POST".into(),
                 url: providers::image_endpoint(id, &config.translate).unwrap_or_else(|| "—".into()),
                 note: format!(
-                    "由「{}」一步完成识别 + 翻译{}",
+                    "由「{}」一步完成识别 + 翻译{}{}",
                     providers::provider_label(id),
-                    model_note(&config.translate.profile(id).model)
+                    model_note(&config.translate.profile(id).model),
+                    tier_suffix(id, &config, true)
                 ),
             },
             None => EndpointInfo {
@@ -261,9 +262,10 @@ pub fn describe_endpoints(config: AppConfig) -> Endpoints {
             method: "POST".into(),
             url: providers::text_endpoint(id, &config.translate).unwrap_or_else(|| "—".into()),
             note: format!(
-                "目标语言 {}{}",
+                "目标语言 {}{}{}",
                 config.translate.target_lang,
-                model_note(&config.translate.profile(id).model)
+                model_note(&config.translate.profile(id).model),
+                tier_suffix(id, &config, false)
             ),
         },
     };
@@ -272,7 +274,11 @@ pub fn describe_endpoints(config: AppConfig) -> Endpoints {
         providers::image_endpoint(id, &config.translate).map(|url| EndpointInfo {
             method: "POST".into(),
             url,
-            note: format!("一步图片翻译（{}）", providers::provider_label(id)),
+            note: format!(
+                "一步图片翻译（{}）{}",
+                providers::provider_label(id),
+                tier_suffix(id, &config, true)
+            ),
         })
     });
 
@@ -290,6 +296,15 @@ fn model_note(model: &str) -> String {
         String::new()
     } else {
         format!("，模型 {trimmed}")
+    }
+}
+
+/// 「 · 档位 …」后缀，说明通用 / 大模型档位真正改变了什么。
+fn tier_suffix(provider: &str, config: &AppConfig, image: bool) -> String {
+    let tier = config.translate.profile(provider).tier(provider);
+    match crate::providers::tier_note(provider, &tier, image) {
+        Some(note) if !tier.is_empty() => format!(" · {note}"),
+        _ => String::new(),
     }
 }
 
@@ -357,6 +372,37 @@ pub fn reveal_log(app: AppHandle) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|err| format!("打开日志位置失败：{err}"))
+}
+
+/// 手册文件名（随安装包发布，见 `tauri.conf.json` 的 bundle.resources）。
+const GUIDE_FILE_NAME: &str = "GUIDE.md";
+
+/// 打开《使用手册》：新用户照着做一遍就会用。
+#[tauri::command]
+pub fn open_guide(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt as _;
+
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(dir) = app.path().resource_dir() {
+        candidates.push(dir.join("docs").join(GUIDE_FILE_NAME));
+        candidates.push(dir.join(GUIDE_FILE_NAME));
+    }
+    // 开发时手册就在仓库里；这个编译期路径只在开发机上存在，找不到就跳过。
+    candidates.push(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("docs")
+            .join(GUIDE_FILE_NAME),
+    );
+
+    let path = candidates
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| format!("没有找到手册文件 {GUIDE_FILE_NAME}，可以改看项目里的 README.md。"))?;
+
+    app.opener()
+        .open_path(path.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|err| format!("打开手册失败：{err}"))
 }
 
 /* ------------------------------------------------------------------- capture */

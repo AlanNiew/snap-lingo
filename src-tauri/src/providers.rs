@@ -1281,6 +1281,40 @@ pub fn ocr_endpoint(ocr: &OcrConfig) -> Option<String> {
     }
 }
 
+/// 档位（通用 / 大模型…）到底改变了什么：有的换端点，有的只是换一个请求参数。
+/// `image` 为真时描述一步图片翻译那条路径。
+pub fn tier_note(provider: &str, tier: &str, image: bool) -> Option<String> {
+    Some(match (provider, image) {
+        ("baidu", false) => {
+            if tier == "llm" {
+                "大模型翻译走 /ait/api/aiTextTranslate".to_string()
+            } else {
+                "通用翻译走 /api/trans/vip/translate".to_string()
+            }
+        }
+        ("baidu", true) => "图片翻译接口固定，档位只影响文本翻译".to_string(),
+        ("youdao", false) => "档位只影响一步图片翻译（translateOption）".to_string(),
+        ("youdao", true) => format!(
+            "translateOption={}",
+            if tier == "llm" {
+                "1（大模型译后编辑）"
+            } else {
+                "0（传统翻译）"
+            }
+        ),
+        ("tencent", false) => "档位只影响一步图片翻译（Mode）".to_string(),
+        ("tencent", true) => format!(
+            "Mode={}",
+            if tier == "lite" {
+                "1（极速版）"
+            } else {
+                "0（大模型版）"
+            }
+        ),
+        _ => return None,
+    })
+}
+
 /// 一行摘要：这次会走哪个识别渠道、哪个翻译接口。写进日志方便自查。
 pub fn describe_run(cfg: &AppConfig) -> String {
     let ocr = match cfg.ocr.provider.as_str() {

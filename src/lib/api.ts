@@ -93,6 +93,7 @@ export const api = {
   hideSettings: () => invoke<void>("hide_settings"),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   revealConfigDir: () => invoke<void>("reveal_config_dir"),
+  openGuide: () => invoke<void>("open_guide"),
   describeEndpoints: (config: AppConfig) =>
     invoke<Endpoints>("describe_endpoints", { config }),
   readLog: () => invoke<LogFile>("read_log"),

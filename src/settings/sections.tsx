@@ -398,7 +398,6 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
               placeholder="http://127.0.0.1:1224"
             />
           </Field>
-          <EndpointHint config={config} kind="ocr" />
           <div className="row row-top" style={{ marginTop: 12 }}>
             <div className="row-main">
               <button className="btn" disabled={probing} onClick={() => void runProbe()}>
@@ -409,6 +408,7 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
             {meta.applyUrl ? <ApplyLink url={meta.applyUrl} label={t("ocrLocalGet")} /> : null}
           </div>
           {probeNote}
+          <EndpointHint config={config} kind="ocr" />
         </Card>
       ) : null}
 
@@ -727,8 +727,8 @@ export function TranslateSection({ config, patch, notify }: Base) {
                 />
               </Field>
             ) : null}
-            <EndpointHint config={config} kind="translate" />
             <TranslateTest config={config} />
+            <EndpointHint config={config} kind="translate" />
           </div>
         </Card>
       ) : null}
@@ -982,7 +982,21 @@ export function HistorySection({
 /* ==================================================================== logs */
 
 const LOG_LINE_LIMIT = 1200;
-const LOG_PROBLEM = /(ERROR|WARN|失败|出错|未能|超时|不可用|未授权|error|failed)/i;
+
+type LogLevel = "ERROR" | "WARN" | "INFO" | "DEBUG";
+const LOG_LEVELS: LogLevel[] = ["ERROR", "WARN", "INFO", "DEBUG"];
+
+/**
+ * The level a line was written at. Handles both the current
+ * `2026-10-18 10:53:55 WARN …` and the older `[02:53:55Z] WARN …` shape.
+ */
+function lineLevel(line: string): LogLevel | null {
+  const match = line.match(
+    /^\s*(?:\[[^\]]+\]|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(ERROR|WARN|INFO|DEBUG|TRACE)\b/,
+  );
+  if (!match) return null;
+  return match[1] === "TRACE" ? "DEBUG" : (match[1] as LogLevel);
+}
 
 function lineTone(line: string): string {
   if (/ERROR|失败|出错|未能|不可用|未授权|error|failed/i.test(line)) return "bad";
@@ -990,6 +1004,22 @@ function lineTone(line: string): string {
   if (/本次任务|接口响应|正在调用|框选层|已冻结/.test(line)) return "info";
   return "";
 }
+
+/** The type of a rendered line, highlighted by tone. */
+function lineToneOf(line: string): string {
+  const level = lineLevel(line);
+  if (level === "ERROR") return "bad";
+  if (level === "WARN") return "warn";
+  if (level) return "info";
+  return lineTone(line);
+}
+
+const LEVEL_KEYS: Record<LogLevel, "logsLevelError" | "logsLevelWarn" | "logsLevelInfo" | "logsLevelDebug"> = {
+  ERROR: "logsLevelError",
+  WARN: "logsLevelWarn",
+  INFO: "logsLevelInfo",
+  DEBUG: "logsLevelDebug",
+};
 
 function humanBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -1005,7 +1035,12 @@ export function LogsSection({ notify }: Base) {
   const { t } = useT();
   const [file, setFile] = useState<LogFile | null>(null);
   const [query, setQuery] = useState("");
-  const [problemsOnly, setProblemsOnly] = useState(false);
+  const [levels, setLevels] = useState<Record<LogLevel, boolean>>({
+    ERROR: true,
+    WARN: true,
+    INFO: true,
+    DEBUG: true,
+  });
   const [auto, setAuto] = useState(true);
 
   const load = useCallback(async () => {
@@ -1029,15 +1064,21 @@ export function LogsSection({ notify }: Base) {
   const shown = useMemo(() => {
     const lines = (file?.content ?? "").split("\n").filter((line) => line.trim() !== "");
     const needle = query.trim().toLowerCase();
-    return lines.filter((line) => {
-      if (problemsOnly && !LOG_PROBLEM.test(line)) return false;
+    const kept = lines.filter((line) => {
+      const level = lineLevel(line);
+      // Lines with no level of their own (continuations, third-party output)
+      // are treated as INFO so a level filter never hides them silently.
+      if (!levels[level ?? "INFO"]) return false;
       if (needle && !line.toLowerCase().includes(needle)) return false;
       return true;
     });
-  }, [file, query, problemsOnly]);
+    // Newest first: the file is append-only, so read it top-down from the end.
+    return kept.reverse();
+  }, [file, query, levels]);
 
   const clipped = shown.length > LOG_LINE_LIMIT;
-  const visible = clipped ? shown.slice(-LOG_LINE_LIMIT) : shown;
+  // Newest first, so the cap keeps the newest lines (at the start of the list).
+  const visible = clipped ? shown.slice(0, LOG_LINE_LIMIT) : shown;
 
   const copyAll = async () => {
     const ok = await copyText(visible.join("\n"));
@@ -1088,15 +1129,21 @@ export function LogsSection({ notify }: Base) {
       >
         <Row title={t("logsFile")} hint={file?.path ?? "…"}>
           <div className="logs-tools">
-            <button
-              className={cx("btn btn-sm", problemsOnly ? "btn-primary" : "btn-ghost")}
-              onClick={() => setProblemsOnly((value) => !value)}
-            >
-              {t("logsErrorsOnly")}
-            </button>
             <Switch checked={auto} onChange={setAuto} title={t("logsAuto")} />
           </div>
         </Row>
+        <div className="logs-levels">
+          <span className="field-label">{t("logsLevel")}</span>
+          {LOG_LEVELS.map((level) => (
+            <button
+              key={level}
+              className={cx("logs-level", level.toLowerCase(), levels[level] && "on")}
+              onClick={() => setLevels((current) => ({ ...current, [level]: !current[level] }))}
+            >
+              {t(LEVEL_KEYS[level])}
+            </button>
+          ))}
+        </div>
         <div className="logs-filter">
           <TextInput value={query} onChange={setQuery} placeholder={t("logsFilter")} />
         </div>
@@ -1110,7 +1157,7 @@ export function LogsSection({ notify }: Base) {
             </div>
           ) : (
             visible.map((line, index) => (
-              <div className={cx("logs-line", lineTone(line))} key={index}>
+              <div className={cx("logs-line", lineToneOf(line))} key={index}>
                 {line}
               </div>
             ))
@@ -1144,7 +1191,8 @@ export function AboutSection({
               {t("appName")}
             </div>
             <div className="row-hint">
-              {t("aboutVersion")} {__APP_VERSION__} · {config.ocr.provider === "winocr" ? t("ocrWin") : t("ocrVision")} +{" "}
+              {t("aboutVersion")} {__APP_VERSION__} ·{" "}
+              {t(OCR_ENGINES.find((engine) => engine.id === config.ocr.provider)?.titleKey ?? "ocrWin")} +{" "}
               {t(PROVIDER_KEYS[config.translate.provider])}
             </div>
           </div>
@@ -1152,6 +1200,17 @@ export function AboutSection({
             <span className="badge badge-accent">
               {config.shortcut.replace(/Key/, "")}
             </span>
+          </div>
+        </div>
+        <div className="row row-top">
+          <div className="row-main">
+            <div className="row-title">{t("guideOpen")}</div>
+            <div className="row-hint">{t("guideHint")}</div>
+          </div>
+          <div className="row-control">
+            <button className="btn btn-sm" onClick={() => void api.openGuide()}>
+              {t("guideOpen")}
+            </button>
           </div>
         </div>
       </Card>
