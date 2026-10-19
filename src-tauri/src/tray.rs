@@ -72,6 +72,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(handle_menu_event)
         .on_tray_icon_event(|tray, event| {
+            // A plain click opens the settings window (the capture entry lives in
+            // the menu above and on the global shortcut) — clicking the tray must
+            // never grab the screen by surprise.
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -80,7 +83,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             {
                 let app = tray.app_handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    pipeline::begin_capture(app).await;
+                    windows::show_settings(&app);
                 });
             }
         });
@@ -111,7 +114,7 @@ pub fn sync_autostart_check(app: &AppHandle, enabled: bool) {
 
 fn tooltip(app: &AppHandle) -> String {
     let shortcut = app.state::<crate::state::AppState>().config().shortcut;
-    format!("SnapLingo · {shortcut} 截图翻译")
+    format!("SnapLingo · {shortcut} 截图翻译 · 单击打开设置")
 }
 
 fn autostart_enabled(app: &AppHandle) -> bool {
