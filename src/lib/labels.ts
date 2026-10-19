@@ -8,7 +8,6 @@ export const PROVIDER_KEYS: Record<TranslateProvider, StringKey> = {
   microsoft: "translateMicrosoft",
   google: "translateGoogle",
   youdao: "translateYoudao",
-  "youdao-llm": "translateYoudaoLlm",
   baidu: "translateBaidu",
   tencent: "translateTencent",
   none: "translateNone",
@@ -86,21 +85,9 @@ export const TRANSLATE_ENGINES: TranslateEngine[] = [
     keyPlaceholder: "应用 ID",
     picture: true,
     tiers: [
-      { value: "llm", labelKey: "tierLlm" },
       { value: "standard", labelKey: "tierStandard" },
-    ],
-  },
-  {
-    id: "youdao-llm",
-    titleKey: "translateYoudaoLlm",
-    descKey: "translateYoudaoLlmDesc",
-    fields: ["apiKey", "apiSecret"],
-    // The LLM channel has its own console page and no per-app free quota.
-    applyUrl: "https://ai.youdao.com/console/#/app-overview",
-    keyPlaceholder: "应用 ID",
-    tiers: [
-      { value: "pro", labelKey: "tierPro" },
-      { value: "lite", labelKey: "tierLite" },
+      { value: "llm", labelKey: "tierLlmPro" },
+      { value: "lite", labelKey: "tierLlmLite" },
     ],
   },
   {

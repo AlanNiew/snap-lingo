@@ -173,11 +173,6 @@ const STRINGS = {
     "百度翻译开放平台（通用文本翻译），有免费额度。",
     "Baidu Translate open platform (general text), with a free quota.",
   ],
-  translateYoudaoLlm: ["有道大模型翻译", "Youdao LLM translation"],
-  translateYoudaoLlmDesc: [
-    "有道「子曰」大模型翻译通道（流式接口），译文更自然，需在控制台开通并充值。",
-    "Youdao's 子曰 LLM channel (streaming). More natural output; must be enabled and topped up.",
-  ],
   translateTencent: ["腾讯云翻译 (TMT)", "Tencent Cloud TMT"],
   translateTencentDesc: [
     "腾讯云机器翻译，每月 500 万字符免费额度。",
@@ -204,7 +199,8 @@ const STRINGS = {
   tierStandard: ["通用翻译", "Standard"],
   tierLlm: ["大模型翻译", "LLM"],
   tierLite: ["轻量版", "Lite"],
-  tierPro: ["大模型 Pro（子曰）", "LLM Pro (子曰)"],
+  tierLlmPro: ["大模型 · 子曰 Pro", "LLM · 子曰 Pro"],
+  tierLlmLite: ["大模型 · 子曰 Lite", "LLM · 子曰 Lite"],
   tierHint: [
     "大模型版本通常需要在服务商控制台单独开通；开通前可先用通用版本。",
     "LLM tiers usually have to be enabled in the provider console first.",
