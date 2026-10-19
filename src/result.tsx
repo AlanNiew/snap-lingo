@@ -100,81 +100,12 @@ export function ResultWindow() {
 
   useEffect(() => applyTheme(config?.ui.theme), [config?.ui.theme]);
 
-  /* ------------------------------------------------------ size to the content */
+  /* ------------------------------------------------------- window placement */
 
-  useEffect(() => {
-    const node = root.current;
-    if (!node) return;
-
-    // A window that resizes itself in response to its own resize can oscillate
-    // forever (a scrollbar appearing rewraps the text, which changes the height,
-    // which toggles the scrollbar…). Three guards make that impossible: only a
-    // reading seen twice in a row is trusted, only a 4px+ change is worth a
-    // resize, and there is a hard cap per result so a pathological layout can
-    // never spin the main thread.
-    const MAX_FITS = 16;
-    let lastSent = -1;
-    let stable: string | null = null;
-    let sent = 0;
-    let raf = 0;
-    let stopped = false;
-
-    function schedule() {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(measure);
-    }
-
-    function measure() {
-      raf = 0;
-      if (stopped) return;
-      const el = root.current;
-      if (!el) return;
-      const head = el.querySelector<HTMLElement>(".result-head");
-      const body = el.querySelector<HTMLElement>(".result-body");
-      const content = el.querySelector<HTMLElement>(".result-content");
-      const foot = el.querySelector<HTMLElement>(".result-foot");
-      // Measure the *content* box, never the scroll container: `scrollHeight` is
-      // clamped to the container height once the window is too tall, which made
-      // the window unable to shrink and left dead space under the footer.
-      const style = body ? getComputedStyle(body) : null;
-      const padY = style
-        ? parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
-        : 0;
-      const total =
-        (head?.offsetHeight ?? 0) +
-        (content?.offsetHeight ?? 0) +
-        padY +
-        (foot?.offsetHeight ?? 0) +
-        4; // the card's 1px border on both sides + rounding slack
-      if (total < 80) return;
-
-      const key = String(total);
-      if (key !== stable) {
-        // Unsettled reading: wait one more frame before believing it.
-        stable = key;
-        schedule();
-        return;
-      }
-
-      if (sent >= MAX_FITS || Math.abs(total - lastSent) < 4) return;
-      lastSent = total;
-      sent += 1;
-      // Logical pixels: Rust applies `LogicalSize`, so this is CSS pixels.
-      void api.fitResultWindow(window.innerWidth, total).catch(() => undefined);
-      schedule();
-    }
-
-    schedule();
-    // No `window.onresize` listener on purpose: our own fit triggers that event,
-    // and the ResizeObserver below already sees every layout change.
-    const observer = new ResizeObserver(schedule);
-    observer.observe(node);
-    return () => {
-      stopped = true;
-      cancelAnimationFrame(raf);
-      observer.disconnect();
-    };
-  }, [payload, stage, config?.ui.resultFontSize, config?.ui.resultView, view]);
+  // The window is centred and sized to ~50% of the screen by the Rust side on
+  // every show (`windows::place_result`). Nothing here measures content to
+  // resize the window: a window that resizes itself while you drag its corner
+  // fights your mouse, which is exactly the jitter we used to have.
 
   /* ------------------------------------------------------------- interactions */
 
