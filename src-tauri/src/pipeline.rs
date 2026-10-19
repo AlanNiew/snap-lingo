@@ -9,7 +9,7 @@
 //!    window with the message in it, because a background app that silently
 //!    does nothing is indistinguishable from a broken one.
 
-use crate::capture;
+use crate::capture::{self, MonitorFrame};
 use crate::config::AppConfig;
 use crate::imageops;
 use crate::model::{new_id, now_ms, ResultPayload, SelectionRect, Stage, StageEvent};
@@ -72,6 +72,22 @@ fn emit_stage(app: &AppHandle, stage: Stage, message: Option<&str>, elapsed_ms: 
 
 /* ------------------------------------------------------------------ capture */
 
+/// Downscale and JPEG-encode one monitor's backdrop.
+///
+/// This is the slowest step of the whole hotkey path, so it is kept apart and
+/// can run once per monitor on its own thread. Quality 78 is plenty: the image
+/// sits behind the selection rectangle purely so the user can aim, and the real
+/// crop is taken from the full-resolution frame.
+fn build_entry(frame: MonitorFrame, edge: u32) -> Result<SessionEntry> {
+    let preview = imageops::scale_to_long_edge(&frame.frame, edge);
+    let preview_data_url = imageops::to_jpeg_data_url(&preview, 78)?;
+    Ok(SessionEntry {
+        frame,
+        preview,
+        preview_data_url,
+    })
+}
+
 /// Hotkey / tray / button entry point. Freezes every screen, then hands control
 /// to the overlays.
 pub async fn begin_capture(app: AppHandle) {
@@ -103,31 +119,53 @@ pub async fn begin_capture(app: AppHandle) {
 
     emit_stage(&app, Stage::Capturing, Some("正在截取屏幕…"), 0);
 
+    let started = Instant::now();
+
     // Our own windows must never appear inside the shot.
-    windows::hide_transient(&app);
-    // Let the compositor actually remove them before reading the screen.
-    // (tokio sleep, not `std::thread::sleep`: this is an async task and the
-    // main thread has to stay free to service the overlay windows.)
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    let hid = windows::hide_transient(&app);
+    if hid {
+        // Only pay for the compositor round trip when something was actually on
+        // screen: an extra 60 ms on every hotkey press is exactly the kind of
+        // unexplained lag we want out of this path.
+        tokio::time::sleep(Duration::from_millis(60)).await;
+    }
 
     let all_monitors = cfg.capture.all_monitors;
     let preview_edge = windows::PREVIEW_LONG_EDGE;
     let prepared = match tokio::time::timeout(
         CAPTURE_TIMEOUT,
-        tauri::async_runtime::spawn_blocking(move || -> Result<Vec<SessionEntry>> {
+        tauri::async_runtime::spawn_blocking(move || -> Result<(Vec<SessionEntry>, u128, u128)> {
+            let t_capture = Instant::now();
             let frames = capture::capture(all_monitors)?;
-            let mut entries = Vec::with_capacity(frames.len());
-            for frame in frames {
-                // Encoded once, here, so opening an overlay is instant.
-                let preview = imageops::scale_to_long_edge(&frame.frame, preview_edge);
-                let preview_data_url = imageops::to_jpeg_data_url(&preview, 82)?;
-                entries.push(SessionEntry {
-                    frame,
-                    preview,
-                    preview_data_url,
-                });
-            }
-            Ok(entries)
+            let capture_ms = t_capture.elapsed().as_millis();
+
+            // Encode each monitor's backdrop; with several screens this runs on
+            // one thread per screen, because encoding is the slowest part of the
+            // whole path (it is what the user waits for).
+            let t_encode = Instant::now();
+            let entries = if frames.len() > 1 {
+                std::thread::scope(|scope| -> Result<Vec<SessionEntry>> {
+                    let mut handles = Vec::with_capacity(frames.len());
+                    for frame in frames {
+                        handles.push(scope.spawn(move || build_entry(frame, preview_edge)));
+                    }
+                    let mut out = Vec::with_capacity(handles.len());
+                    for handle in handles {
+                        out.push(
+                            handle
+                                .join()
+                                .unwrap_or_else(|_| Err(anyhow!("预览编码线程异常")))?,
+                        );
+                    }
+                    Ok(out)
+                })?
+            } else {
+                frames
+                    .into_iter()
+                    .map(|frame| build_entry(frame, preview_edge))
+                    .collect::<Result<Vec<SessionEntry>>>()?
+            };
+            Ok((entries, capture_ms, t_encode.elapsed().as_millis()))
         }),
     )
     .await
@@ -144,8 +182,8 @@ pub async fn begin_capture(app: AppHandle) {
         }
     };
 
-    let entries = match prepared {
-        Ok(Ok(entries)) => entries,
+    let (entries, capture_ms, encode_ms) = match prepared {
+        Ok(Ok(parts)) => parts,
         Ok(Err(err)) => return fail(&app, &format!("{err:#}")),
         Err(err) => return fail(&app, &format!("截图线程异常：{err}")),
     };
@@ -188,6 +226,13 @@ pub async fn begin_capture(app: AppHandle) {
         *lock(&state.session) = None;
         return fail(&app, "无法创建截图覆盖层。");
     }
+
+    // One line that says where the hotkey's time actually went.
+    let total_ms = started.elapsed().as_millis();
+    let window_ms = (total_ms as i64 - capture_ms as i64 - encode_ms as i64).max(0);
+    log::info!(
+        "截图计时：抓屏 {capture_ms} ms · 编码 {encode_ms} ms · 框选层 {window_ms} ms · 合计 {total_ms} ms（框选层就绪时间见下一行）"
+    );
 
     spawn_delayed(app.clone(), OVERLAY_READY_TIMEOUT, move |app| {
         // Anything still invisible gets shown so the user is never stranded.
@@ -238,16 +283,23 @@ pub async fn begin_capture(app: AppHandle) {
 
 /// Called by an overlay once its frozen frame is on screen.
 pub fn overlay_ready(app: &AppHandle, monitor_id: u32) {
-    let focus = {
+    let (focus, since_freeze_ms) = {
         let state = app.state::<AppState>();
         let session = lock(&state.session);
-        session
+        let focus = session
             .as_ref()
             .and_then(|s| s.entries.first())
             .map(|entry| entry.frame.id == monitor_id)
-            .unwrap_or(false)
+            .unwrap_or(false);
+        let since = session
+            .as_ref()
+            .map(|s| s.started.elapsed().as_millis())
+            .unwrap_or(0);
+        (focus, since)
     };
-    log::debug!("框选层已绘制（显示器 {monitor_id}，focus={focus}）");
+    // `since_freeze_ms` is the part the user feels beyond the timings logged in
+    // `begin_capture`: overlay window + page boot + image decode.
+    log::info!("框选层已绘制（显示器 {monitor_id}，focus={focus}，冻结后 {since_freeze_ms} ms）");
     windows::reveal_overlay(app, monitor_id, focus);
 }
 
@@ -335,7 +387,9 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
     let started = Instant::now();
     let mut cfg = app.state::<AppState>().config();
     let providers = app.state::<AppState>().providers.clone();
+    let preview_started = Instant::now();
     let preview = imageops::to_preview_data_url(&crop).ok();
+    let preview_ms = preview_started.elapsed().as_millis();
     let (ocr_provider, model) = provider_labels(&cfg);
     log::info!(
         "本次任务：{} · 图像 {}×{}",
@@ -399,7 +453,10 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
         }
     }
 
-    match recognize(&app, &cfg, &providers, &crop).await {
+    let ocr_started = Instant::now();
+    let recognized = recognize(&app, &cfg, &providers, &crop).await;
+    let ocr_ms = ocr_started.elapsed().as_millis();
+    match recognized {
         Ok((source, inline_translation)) => {
             // Smart target: decide from the recognised text before translating.
             cfg.translate.target_lang =
@@ -412,6 +469,7 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
                 error: None,
             };
 
+            let mut translate_ms = 0u128;
             if job.translation.is_none() && cfg.translate.provider != "none" {
                 emit_stage(
                     &app,
@@ -419,11 +477,18 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
                     Some("正在翻译…"),
                     started.elapsed().as_millis() as u64,
                 );
+                let translate_started = Instant::now();
                 match providers.translate(&cfg.translate, &source).await {
                     Ok(text) => job.translation = Some(text),
                     Err(err) => job.error = Some(format!("{err:#}")),
                 }
+                translate_ms = translate_started.elapsed().as_millis();
             }
+
+            log::info!(
+                "处理计时：识别 {ocr_ms} ms · 翻译 {translate_ms} ms · 预览 {preview_ms} ms · 合计 {} ms",
+                started.elapsed().as_millis()
+            );
 
             let state = app.state::<AppState>();
             *lock(&state.last_source) = Some(source);
