@@ -7,9 +7,15 @@ import { createRoot } from "react-dom/client";
 
 import { api, onConfigChanged, onResult, onStage } from "./lib/api";
 import { t as translate, type StringKey } from "./lib/i18n";
-import { PROVIDER_KEYS } from "./lib/labels";
+import {
+  PROVIDER_KEYS,
+  TARGET_LANGS,
+  targetOptionLabel,
+  withTarget,
+} from "./lib/labels";
 import type { AppConfig, ResultPayload, Stage, StageEvent, TranslateProvider } from "./lib/types";
 import { copyText, formatDuration } from "./lib/util";
+import { Select } from "./settings/fields";
 import "./styles.css";
 
 const BUSY: Stage[] = ["capturing", "ocr", "translate"];
@@ -191,6 +197,26 @@ export function ResultWindow() {
     }
   };
 
+  /**
+   * Quick target-language switch. The choice is written back to the config (so
+   * the next capture uses it too) and the current result is translated again
+   * from the cached picture — no trip to the settings page.
+   */
+  const switchTarget = async (targetLang: string) => {
+    if (!config || targetLang === config.translate.targetLang) return;
+    const next: AppConfig = {
+      ...config,
+      translate: { ...config.translate, targetLang },
+    };
+    setConfig(next);
+    try {
+      await api.saveConfig(next);
+      await api.retryTranslation();
+    } catch {
+      /* the pipeline reports the failure in the result card */
+    }
+  };
+
   useEffect(() => {
     if (!config?.ui.autoCopy || !payload || payload.error) return;
     if (autoCopied.current === payload.id) return;
@@ -270,7 +296,10 @@ export function ResultWindow() {
     <div className="result" ref={root}>
       <header className="result-head" data-tauri-drag-region="deep">
         <span className="result-title">
-          {tt("translation")} · {payload?.targetLang || tt("empty")}
+          {tt("translation")} ·{" "}
+          {payload?.targetLang
+            ? targetOptionLabel(payload.targetLang, tt("targetAuto"))
+            : tt("empty")}
         </span>
         <span className="result-status">
           {busy ? <span className="spinner" /> : null}
@@ -348,6 +377,20 @@ export function ResultWindow() {
       </div>
 
       <footer className="result-foot">
+          {config ? (
+            <label className="result-lang" title={tt("targetLang")}>
+              <span className="result-lang-label">{tt("targetLang")}</span>
+              <Select
+                value={config.translate.targetLang}
+                onChange={(value) => void switchTarget(value)}
+                options={withTarget(TARGET_LANGS, config.translate.targetLang).map((option) => ({
+                  value: option.value,
+                  label: targetOptionLabel(option.value, tt("targetAuto")),
+                }))}
+              />
+            </label>
+          ) : null}
+
           {payload && !payload.error ? (
             <div className="result-view" role="group" aria-label={tt("resultView")}>
               {viewOptions.map((option) => (

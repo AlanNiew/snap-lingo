@@ -2,7 +2,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, type MonitorInfo, type OcrLanguage } from "../lib/api";
-import { OCR_ENGINES, PROVIDER_KEYS, TRANSLATE_ENGINES, engineMeta, type ProfileField } from "../lib/labels";
+import {
+  OCR_ENGINES,
+  PROVIDER_KEYS,
+  TARGET_LANGS,
+  TRANSLATE_ENGINES,
+  engineMeta,
+  targetOptionLabel,
+  withTarget,
+  type ProfileField,
+} from "../lib/labels";
 import {
   EMPTY_PROFILE,
   type AppConfig,
@@ -44,34 +53,6 @@ interface Base {
   config: AppConfig;
   patch: PatchFn;
   notify: NotifyFn;
-}
-
-const TARGET_LANGS = [
-  { value: "zh-CN", label: "简体中文" },
-  { value: "zh-TW", label: "繁體中文" },
-  { value: "en", label: "English" },
-  { value: "ja", label: "日本語" },
-  { value: "ko", label: "한국어" },
-  { value: "fr", label: "Français" },
-  { value: "de", label: "Deutsch" },
-  { value: "es", label: "Español" },
-  { value: "ru", label: "Русский" },
-  { value: "pt", label: "Português" },
-  { value: "it", label: "Italiano" },
-  { value: "ar", label: "العربية" },
-  { value: "hi", label: "हिन्दी" },
-  { value: "th", label: "ไทย" },
-  { value: "vi", label: "Tiếng Việt" },
-  { value: "id", label: "Bahasa Indonesia" },
-  { value: "tr", label: "Türkçe" },
-];
-
-function withCurrent(
-  options: Array<{ value: string; label: string }>,
-  current: string,
-): Array<{ value: string; label: string }> {
-  if (!current || options.some((option) => option.value === current)) return options;
-  return [{ value: current, label: current }, ...options];
 }
 
 /* ================================================================= general */
@@ -623,7 +604,10 @@ export function TranslateSection({ config, patch, notify }: Base) {
             <Select
               value={config.translate.targetLang}
               onChange={(value) => setTranslate({ targetLang: value }, true)}
-              options={withCurrent(TARGET_LANGS, config.translate.targetLang)}
+              options={withTarget(TARGET_LANGS, config.translate.targetLang).map((option) => ({
+                value: option.value,
+                label: targetOptionLabel(option.value, t("targetAuto")),
+              }))}
             />
           </Row>
         </Card>
