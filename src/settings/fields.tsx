@@ -222,7 +222,7 @@ export function Select<T extends string>({
   disabled,
 }: {
   value: T;
-  options: Array<{ value: T; label: string }>;
+  options: Array<{ value: T; label: string; disabled?: boolean }>;
   onChange: (next: T) => void;
   disabled?: boolean;
 }) {
@@ -235,7 +235,7 @@ export function Select<T extends string>({
       onChange={(event) => onChange(event.target.value as T)}
     >
       {options.map((option) => (
-        <option key={option.value} value={option.value}>
+        <option key={option.value} value={option.value} disabled={option.disabled}>
           {option.label}
         </option>
       ))}

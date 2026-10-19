@@ -173,11 +173,17 @@ function PresetPicker({
   presets,
   onPick,
   currentUrl,
+  unavailable,
 }: {
   presets: ProviderPreset[];
   onPick: (preset: ProviderPreset) => void;
   /** Endpoint currently in the form, used to reflect the matching preset. */
   currentUrl: string;
+  /**
+   * Presets the current channel cannot use. They stay in the list (so the OCR
+   * and translation pickers show the same providers) but are greyed out.
+   */
+  unavailable?: (preset: ProviderPreset) => boolean;
 }) {
   const { t } = useT();
   const matched = presets.find((preset) => preset.baseUrl === currentUrl);
@@ -193,7 +199,14 @@ function PresetPicker({
           }}
           options={[
             { value: "", label: t("presetCustom") },
-            ...presets.map((preset) => ({ value: preset.id, label: preset.label })),
+            ...presets.map((preset) => {
+              const off = unavailable?.(preset) ?? false;
+              return {
+                value: preset.id,
+                label: off ? `${preset.label} · ${t("presetTextOnly")}` : preset.label,
+                disabled: off,
+              };
+            }),
           ]}
         />
       </Row>
@@ -370,7 +383,8 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
         </Row>
         {provider === "vision" ? (
           <PresetPicker
-            presets={PRESETS.filter((preset) => preset.visionModel)}
+            presets={PRESETS}
+            unavailable={(preset) => !preset.visionModel}
             currentUrl={config.ocr.baseUrl}
             onPick={(preset) => {
               setOcr({ baseUrl: preset.baseUrl, model: preset.visionModel }, true);
@@ -601,7 +615,8 @@ export function TranslateSection({ config, patch, notify }: Base) {
         ) : null}
         {provider === "openai" ? (
           <PresetPicker
-            presets={PRESETS.filter((preset) => preset.textModel)}
+            presets={PRESETS}
+            unavailable={(preset) => !preset.textModel}
             currentUrl={profile.baseUrl}
             onPick={(preset) => {
               setProfile({ baseUrl: preset.baseUrl, model: preset.textModel }, true);
