@@ -119,10 +119,14 @@ const STRINGS = {
   hideKey: ["隐藏", "Hide"],
 
   /* presets */
-  presetTitle: ["快速填充", "Presets"],
+  presetTitle: ["内置服务商预设", "Built-in provider presets"],
   presetHint: [
     "一键填入常用服务商的接口地址与模型，密钥仍需自行填写。",
     "Fills the endpoint and model for a known provider. You still supply the key.",
+  ],
+  presetNote: [
+    "「大模型 · OpenAI 兼容」与「视觉大模型」两个渠道自带这些预设；其它渠道（DeepL、微软、有道…）是各自的官方接口，不需要预设。",
+    "These presets belong to the “LLM · OpenAI-compatible” and “Vision model” channels; the others (DeepL, Microsoft, Youdao…) use their own official endpoints.",
   ],
   applyUrl: ["官方申请地址", "Get credentials"],
   applyUrlOpen: ["打开申请页面", "Open sign-up page"],
@@ -136,7 +140,7 @@ const STRINGS = {
     "只提取文字，不做翻译。适合只想复制原文的场景。",
     "Extracts text without translating.",
   ],
-  translateOpenai: ["OpenAI 兼容接口", "OpenAI-compatible"],
+  translateOpenai: ["大模型 · OpenAI 兼容", "LLM · OpenAI-compatible"],
   translateOpenaiDesc: [
     "任何兼容 /chat/completions 的服务：OpenAI、DeepSeek、智谱、通义、NVIDIA NIM、Ollama、LM Studio 等。",
     "Any /chat/completions endpoint: OpenAI, DeepSeek, Zhipu, Qwen, NVIDIA NIM, Ollama, LM Studio…",

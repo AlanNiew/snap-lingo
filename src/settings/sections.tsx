@@ -368,6 +368,18 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
             }))}
           />
         </Row>
+        {provider === "vision" ? (
+          <PresetPicker
+            presets={PRESETS.filter((preset) => preset.visionModel)}
+            currentUrl={config.ocr.baseUrl}
+            onPick={(preset) => {
+              setOcr({ baseUrl: preset.baseUrl, model: preset.visionModel }, true);
+              notify(`${preset.label} · ${preset.visionModel}`, false);
+            }}
+          />
+        ) : (
+          <div className="note">{t("presetNote")}</div>
+        )}
       </Card>
 
       {provider === "local" ? (
@@ -423,16 +435,6 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
               set={(next) => setOcr(next, false)}
             />
             <EndpointHint config={config} kind="ocr" />
-            <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-              <PresetPicker
-                presets={PRESETS.filter((preset) => preset.visionModel)}
-                currentUrl={config.ocr.baseUrl}
-                onPick={(preset) => {
-                  setOcr({ baseUrl: preset.baseUrl, model: preset.visionModel }, true);
-                  notify(`${preset.label} · ${preset.visionModel}`, false);
-                }}
-              />
-            </div>
           </Card>
 
           <Card title={t("advanced")}>
@@ -597,6 +599,18 @@ export function TranslateSection({ config, patch, notify }: Base) {
             <ApplyLink url={meta.applyUrl} />
           </Row>
         ) : null}
+        {provider === "openai" ? (
+          <PresetPicker
+            presets={PRESETS.filter((preset) => preset.textModel)}
+            currentUrl={profile.baseUrl}
+            onPick={(preset) => {
+              setProfile({ baseUrl: preset.baseUrl, model: preset.textModel }, true);
+              notify(`${preset.label} · ${preset.textModel}`, false);
+            }}
+          />
+        ) : provider !== "none" ? (
+          <div className="note">{t("presetNote")}</div>
+        ) : null}
       </Card>
 
       {provider !== "none" ? (
@@ -626,16 +640,6 @@ export function TranslateSection({ config, patch, notify }: Base) {
               onTest={() => api.testTranslateConnection(config.translate)}
             />
             <EndpointHint config={config} kind="translate" />
-            <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-              <PresetPicker
-                presets={PRESETS.filter((preset) => preset.textModel)}
-                currentUrl={profile.baseUrl}
-                onPick={(preset) => {
-                  setProfile({ baseUrl: preset.baseUrl, model: preset.textModel }, true);
-                  notify(`${preset.label} · ${preset.textModel}`, false);
-                }}
-              />
-            </div>
           </Card>
 
           <Card title={t("advanced")}>
