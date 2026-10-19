@@ -131,6 +131,7 @@ const STRINGS = {
   applyUrl: ["官方申请地址", "Get credentials"],
   applyUrlOpen: ["打开申请页面", "Open sign-up page"],
   presetCustom: ["自定义 / 已手动填写", "Custom / filled in"],
+  presetTextOnly: ["仅文本模型", "text only"],
   channel: ["渠道", "Service"],
 
   /* translate */

@@ -139,7 +139,7 @@ npm run tauri build
 }
 ```
 
-内置预设服务商（设置页可一键填充）：NVIDIA NIM、智谱 GLM、DeepSeek、阿里云百炼、OpenAI、硅基流动、Kimi、OpenRouter、Ollama、LM Studio、OpenCode Zen、百度千帆、腾讯混元、讯飞星火、Google Gemini、Groq、Mistral、xAI Grok、Together AI、DeepInfra、Cerebras、Fireworks —— 全部走 OpenAI 兼容协议。
+内置预设服务商（设置页可一键填充）：NVIDIA NIM、智谱 GLM、DeepSeek、阿里云百炼、OpenAI、硅基流动、Kimi、OpenRouter、Ollama、LM Studio、OpenCode Zen、百度千帆、腾讯混元、讯飞星火、Google Gemini、Groq、Mistral、xAI Grok、Together AI、DeepInfra、Cerebras、Fireworks —— 全部走 OpenAI 兼容协议。翻译页与「视觉大模型」识别页共用这一份清单：只有文本模型的服务商在识别页会标注「仅文本模型」并置灰，避免选了却用不了。
 
 除 OpenAI 兼容协议外，还可以直接使用六家云翻译 API。设置页用**下拉列表**选渠道，选中后只显示该渠道需要的输入框，并给出官方申请地址：
 
