@@ -12,9 +12,47 @@ import { createRoot } from "react-dom/client";
 
 import { api, onToast, type Notice } from "./lib/api";
 import { t as translate, type StringKey } from "./lib/i18n";
-import { applyStoredTheme, applyTheme } from "./lib/theme";
 import type { AppConfig } from "./lib/types";
 import "./styles.css";
+
+/**
+ * The theme helpers live in `lib/theme` (theme branch). The notice keeps its own
+ * tiny copy so every branch builds; the stored value is passed straight through
+ * to `data-theme`, so palettes added later (midnight, paper, …) still apply.
+ */
+const THEME_STORE_KEY = "snaplingo.theme";
+
+function resolveTheme(theme: string | null | undefined): string {
+  const wanted = theme && theme.trim() !== "" ? theme.trim() : "system";
+  if (wanted !== "system") return wanted;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme: string | null | undefined): () => void {
+  const wanted = theme && theme.trim() !== "" ? theme.trim() : "system";
+  const paint = () => {
+    document.documentElement.dataset.theme = resolveTheme(wanted);
+  };
+  paint();
+  try {
+    localStorage.setItem(THEME_STORE_KEY, wanted);
+  } catch {
+    /* storage can be unavailable; the palette still applies for this session */
+  }
+  if (wanted !== "system") return () => undefined;
+  const query = window.matchMedia("(prefers-color-scheme: dark)");
+  query.addEventListener("change", paint);
+  return () => query.removeEventListener("change", paint);
+}
+
+function applyStoredTheme(): void {
+  try {
+    const stored = localStorage.getItem(THEME_STORE_KEY);
+    if (stored) document.documentElement.dataset.theme = resolveTheme(stored);
+  } catch {
+    /* nothing cached yet */
+  }
+}
 
 /// How long a notice stays up. `pipeline::notify` also arms a watchdog, so a
 /// page that never gets to run this timer cannot leave the card on screen.
