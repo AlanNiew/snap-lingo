@@ -707,6 +707,12 @@ fn fail(app: &AppHandle, message: &str) {
 /// notice to link straight to the log page. A watchdog hides it even if the page
 /// never gets to run its own timer.
 pub fn notify(app: &AppHandle, kind: &str, message: &str) {
+    // The card is opt-out: users who find it noisy can switch it off in the
+    // settings window (the failure still lands in the result window and the log).
+    if !app.state::<AppState>().config().ui.notify {
+        return;
+    }
+
     let kind = kind.to_string();
     let message = message.trim();
     let message = if message.chars().count() > 220 {

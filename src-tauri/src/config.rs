@@ -233,6 +233,8 @@ pub struct UiConfig {
     pub result_font_size: u32,
     pub theme: String,
     pub language: String,
+    /// Show the corner notice card when something fails.
+    pub notify: bool,
 }
 
 impl Default for UiConfig {
@@ -245,6 +247,7 @@ impl Default for UiConfig {
             result_font_size: 16,
             theme: "system".into(),
             language: "zh".into(),
+            notify: true,
         }
     }
 }

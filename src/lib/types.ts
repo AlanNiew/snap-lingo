@@ -82,6 +82,7 @@ export interface UiConfig {
   /** What the result window shows: both / source only / translation only. */
   resultView: "both" | "source" | "translation";
   resultShowImage: boolean;
+  notify: boolean;
   closeOnBlur: boolean;
   resultFontSize: number;
   /** Palette id; `system` follows the OS and resolves to light/dark. */
