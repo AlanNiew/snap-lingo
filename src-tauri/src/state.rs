@@ -69,6 +69,9 @@ pub struct AppState {
     pub last_crop: Mutex<Option<RgbaImage>>,
     pub history: Mutex<Vec<HistoryItem>>,
     pub history_path: PathBuf,
+    /// The notice currently on screen (`kind`, `message`), so the auto-hide
+    /// watchdog can tell whether it is still the same one.
+    pub last_toast: Mutex<Option<(String, String)>>,
     /// True from the moment a capture starts until the overlays are gone.
     pub busy: AtomicBool,
     /// Set when the user picks 退出, so window-closing stops being vetoed.
@@ -92,6 +95,7 @@ impl AppState {
             last_crop: Mutex::new(None),
             history: Mutex::new(load_history(&history_path)),
             history_path,
+            last_toast: Mutex::new(None),
             busy: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
         })

@@ -539,6 +539,22 @@ pub fn open_settings(app: AppHandle) {
     windows::show_settings(&app);
 }
 
+/// Dismiss the branded notice (the notice itself calls this on click).
+#[tauri::command]
+pub fn hide_toast(app: AppHandle) {
+    windows::hide_toast(&app);
+    let state = app.state::<crate::state::AppState>();
+    *crate::state::lock(&state.last_toast) = None;
+}
+
+/// Open the settings window straight on the log page — the notice points here.
+#[tauri::command]
+pub fn open_logs(app: AppHandle) {
+    windows::hide_toast(&app);
+    windows::show_settings(&app);
+    let _ = app.emit(crate::pipeline::NAVIGATE_EVENT, "logs");
+}
+
 #[tauri::command]
 pub fn hide_settings(app: AppHandle) {
     if let Some(window) = app.get_webview_window(windows::SETTINGS) {

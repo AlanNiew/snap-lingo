@@ -35,6 +35,7 @@ export default defineConfig({
         main: page("index.html"),
         overlay: page("overlay.html"),
         result: page("result.html"),
+        toast: page("toast.html"),
       },
     },
   },

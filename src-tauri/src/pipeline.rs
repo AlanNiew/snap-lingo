@@ -30,6 +30,10 @@ pub const CONFIG_EVENT: &str = "config:changed";
 /// Sent to a warm overlay when a new capture is frozen, so the page swaps in the
 /// fresh frame instead of showing the previous one.
 pub const SESSION_EVENT: &str = "session:changed";
+/// Ask the settings window to switch to a page (`"logs"`, `"history"`, …).
+pub const NAVIGATE_EVENT: &str = "ui:navigate";
+/// Payload sent to the branded notice window (`toast.html`).
+pub const TOAST_EVENT: &str = "toast:changed";
 
 /// If a webview has not reported that it painted within this window, reveal the
 /// overlay anyway. Without it a failed page load would leave the app stuck in
@@ -618,7 +622,7 @@ fn publish(app: &AppHandle, cfg: &AppConfig, job: Job, preview: Option<String>, 
     match payload.error.as_deref() {
         Some(err) => {
             log::error!("SnapLingo: 处理失败 — {err}");
-            notify(app, "SnapLingo 处理失败", err);
+            notify(app, "error", err);
         }
         None => log::info!(
             "SnapLingo: 识别 {} 字，翻译 {} 字，耗时 {} ms",
@@ -663,23 +667,41 @@ fn fail(app: &AppHandle, message: &str) {
     let _ = app.emit(RESULT_EVENT, payload);
     emit_stage(app, Stage::Error, Some(message), 0);
     log::error!("SnapLingo: {message}");
-    notify(app, "SnapLingo 没能完成这次操作", message);
+    notify(app, "error", message);
 }
 
-/// Show a system notification, trimmed to something a toast can display.
-pub fn notify(app: &AppHandle, title: &str, body: &str) {
-    use tauri_plugin_notification::NotificationExt;
-
-    let body = body.trim();
-    let body = if body.chars().count() > 160 {
-        body.chars().take(159).collect::<String>() + "…"
+/// Show a branded notice, trimmed to something a small window can display.
+///
+/// Deliberately *not* a Windows toast: those are only attributed to SnapLingo in
+/// an installed build (a dev/portable run shows up as “Windows PowerShell”,
+/// because Windows has no registered identity to attach), and we also want the
+/// notice to link straight to the log page. A watchdog hides it even if the page
+/// never gets to run its own timer.
+pub fn notify(app: &AppHandle, kind: &str, message: &str) {
+    let kind = kind.to_string();
+    let message = message.trim();
+    let message = if message.chars().count() > 220 {
+        message.chars().take(219).collect::<String>() + "…"
     } else {
-        body.to_string()
+        message.to_string()
     };
+    let notice = (kind, message);
 
-    if let Err(err) = app.notification().builder().title(title).body(body).show() {
-        log::warn!("系统通知发送失败: {err}");
-    }
+    windows::show_toast(
+        app,
+        serde_json::json!({ "kind": &notice.0, "message": &notice.1 }),
+    );
+
+    let state = app.state::<AppState>();
+    *lock(&state.last_toast) = Some(notice.clone());
+
+    let handle = app.clone();
+    spawn_delayed(handle, std::time::Duration::from_secs(9), move |app| {
+        let state = app.state::<AppState>();
+        if lock(&state.last_toast).as_ref() == Some(&notice) {
+            windows::hide_toast(&app);
+        }
+    });
 }
 
 /// Re-run translation on the last recognised text, no re-selection needed.

@@ -1833,6 +1833,92 @@ summary:focus-visible,
   line-height: 1.7;
 }
 
+/* ------------------------------------------------------------------ notice */
+
+/* The branded failure/notice card. Opaque window (Windows draws the shadow), so
+   the card fills the window edge to edge — same reasoning as the result window. */
+body.notice-body {
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+  padding: 14px 16px;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  cursor: pointer;
+}
+
+.notice:hover {
+  background: var(--surface-2);
+}
+
+.notice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.notice-error {
+  border-left-color: var(--danger);
+}
+
+.notice-mark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 9px;
+}
+
+.notice-error .notice-mark {
+  background: var(--danger);
+}
+
+.notice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.notice-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.notice-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.notice-hint {
+  font-size: 11px;
+  color: var(--accent-strong);
+}
+
 /* ------------------------------------------------------------------ motion */
 
 @media (prefers-reduced-motion: reduce) {
