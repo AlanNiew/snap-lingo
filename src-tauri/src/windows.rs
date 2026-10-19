@@ -25,11 +25,10 @@ pub const TOAST_HEIGHT: f64 = 164.0;
 const TOAST_MARGIN: i32 = 24;
 
 /// The overlay preview is capped so a 4K frame does not become a ~20 MB IPC
-/// payload. Selection accuracy is unaffected: the user's rectangle is mapped
-/// back onto the full-resolution frame before it is cropped, so this number
-/// only decides how sharp the frozen backdrop is — and how long the hotkey
-/// takes (encode, transfer and webview decode all scale with it).
-pub const PREVIEW_LONG_EDGE: u32 = 1600;
+/// payload. It is the frozen backdrop the user aims at — the rectangle is taken
+/// from the full-resolution frame, so this only decides how sharp the backdrop
+/// looks (and, secondarily, how long the hotkey takes).
+pub const PREVIEW_LONG_EDGE: u32 = 2560;
 
 pub fn overlay_label(monitor_id: u32) -> String {
     format!("{OVERLAY_PREFIX}{monitor_id}")

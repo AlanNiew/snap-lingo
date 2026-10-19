@@ -79,11 +79,14 @@ fn emit_stage(app: &AppHandle, stage: Stage, message: Option<&str>, elapsed_ms: 
 /// sits behind the selection rectangle purely so the user can aim, and the real
 /// crop is taken from the full-resolution frame.
 fn build_entry(frame: MonitorFrame, edge: u32) -> Result<SessionEntry> {
-    let preview = imageops::scale_to_long_edge(&frame.frame, edge);
-    let preview_data_url = imageops::to_jpeg_data_url(&preview, 78)?;
+    // The scaled copy is only needed to encode the backdrop; dropping it here
+    // saves a full-size RGBA buffer per monitor (16 MB on a 2560×1600 screen).
+    let preview_data_url = {
+        let scaled = imageops::scale_to_long_edge(&frame.frame, edge);
+        imageops::to_jpeg_data_url(&scaled, 82)?
+    };
     Ok(SessionEntry {
         frame,
-        preview,
         preview_data_url,
     })
 }

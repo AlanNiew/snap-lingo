@@ -25,7 +25,9 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// `SessionEntry::to_frame_rect` maps it back onto the full-resolution frame.
 pub struct SessionEntry {
     pub frame: MonitorFrame,
-    pub preview: RgbaImage,
+    /// Pre-encoded backdrop handed to the overlay. The decoded `RgbaImage` is
+    /// dropped right after encoding: the rectangle is cropped from `frame`, so
+    /// keeping a second full copy only wasted memory.
     pub preview_data_url: String,
 }
 
@@ -41,20 +43,30 @@ impl CaptureSession {
     }
 
     /// Preview-space rect → full-resolution, monitor-local rect.
-    pub fn frame_rect(&self, entry: &SessionEntry, x: f64, y: f64, w: f64, h: f64) -> (i32, i32, i32, i32) {
-        let (pw, ph) = entry.preview.dimensions();
+    /// Keep the selection inside the frozen frame.
+    ///
+    /// The rectangle arrives in **frame pixels** (physical): the overlay maps
+    /// mouse positions onto the captured frame using `SessionImage::width` /
+    /// `height`, which are the frame's dimensions — so how much the backdrop
+    /// image was downscaled for display never enters the maths. (It used to:
+    /// coordinates came in preview pixels and were scaled up here, which quietly
+    /// broke as soon as the preview was smaller than the frame.)
+    pub fn frame_rect(
+        &self,
+        entry: &SessionEntry,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+    ) -> (i32, i32, i32, i32) {
         let (fw, fh) = (entry.frame.width as f64, entry.frame.height as f64);
-        if pw == 0 || ph == 0 {
-            return (0, 0, 0, 0);
-        }
-        let sx = fw / pw as f64;
-        let sy = fh / ph as f64;
-        (
-            (x * sx).round() as i32,
-            (y * sy).round() as i32,
-            (w * sx).round() as i32,
-            (h * sy).round() as i32,
-        )
+        let x0 = x.max(0.0);
+        let y0 = y.max(0.0);
+        let x1 = (x + w).min(fw);
+        let y1 = (y + h).min(fh);
+        let w = (x1 - x0).max(0.0);
+        let h = (y1 - y0).max(0.0);
+        (x0.round() as i32, y0.round() as i32, w.round() as i32, h.round() as i32)
     }
 }
 
@@ -148,9 +160,9 @@ impl AppState {
         self.busy.store(busy, Ordering::SeqCst);
     }
 
-    /// Crop the selected region out of the frozen frame. `rect` arrives in
-    /// overlay-preview pixels (see [`CaptureSession::frame_rect`]) so the drag
-    /// stays accurate even when the preview was downscaled.
+    /// Crop the selected region out of the frozen frame. `rect` is in frame
+    /// pixels — the same space the overlay reports in — so the result is exactly
+    /// what the user framed, whatever resolution the backdrop was encoded at.
     pub fn crop_selection(&self, rect: &crate::model::SelectionRect) -> Option<RgbaImage> {
         let session = lock(&self.session);
         let session = session.as_ref()?;
@@ -213,28 +225,31 @@ mod tests {
                 scale_factor: 2.0,
                 frame: std::sync::Arc::new(RgbaImage::from_pixel(frame.0, frame.1, Rgba([0, 0, 0, 255]))),
             },
-            preview: RgbaImage::from_pixel(preview.0, preview.1, Rgba([0, 0, 0, 255])),
             preview_data_url: String::new(),
         }
     }
 
     #[test]
-    fn preview_rect_scales_back_to_frame_pixels() {
+    fn rect_is_taken_as_frame_pixels() {
         let session = CaptureSession {
             entries: vec![entry((1280, 720), (2560, 1440))],
             started: Instant::now(),
         };
         let e = session.entry(1).unwrap();
-        assert_eq!(session.frame_rect(e, 10.0, 20.0, 100.0, 50.0), (20, 40, 200, 100));
+        // A 2×-downscaled backdrop must not change the rectangle: it is already
+        // in frame pixels.
+        assert_eq!(session.frame_rect(e, 10.0, 20.0, 100.0, 50.0), (10, 20, 100, 50));
     }
 
     #[test]
-    fn one_to_one_preview_is_identity() {
+    fn rect_is_clamped_to_the_frame() {
         let session = CaptureSession {
             entries: vec![entry((800, 600), (800, 600))],
             started: Instant::now(),
         };
         let e = session.entry(1).unwrap();
         assert_eq!(session.frame_rect(e, 5.0, 6.0, 7.0, 8.0), (5, 6, 7, 8));
+        assert_eq!(session.frame_rect(e, -20.0, -5.0, 40.0, 40.0), (0, 0, 20, 35));
+        assert_eq!(session.frame_rect(e, 790.0, 590.0, 100.0, 100.0), (790, 590, 10, 10));
     }
 }
