@@ -3,48 +3,167 @@
    Tokens first, then shared components, then the per-window layout.
    ========================================================================== */
 
+/* Shared tokens (the "Light" palette lives here so it also covers the case of
+   no data-theme attribute at all; every other palette only overrides colours). */
 :root {
+  color-scheme: light;
+
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, "Microsoft YaHei UI",
+    "Microsoft YaHei", -apple-system, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", ui-monospace, SFMono-Regular,
+    Menlo, monospace;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --gap: 12px;
+  --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+
   --accent: #4c6ef5;
   --accent-strong: #3b5bdb;
   --accent-soft: rgba(76, 110, 245, 0.12);
-  --danger: #e03131;
+  --on-accent: #ffffff;
+  --danger: #e5484d;
   --ok: #2f9e44;
   --warn: #e8590c;
 
-  --radius: 10px;
-  --radius-sm: 7px;
-  --gap: 12px;
-
-  --bg: #f4f5f7;
+  --bg: #f3f5f9;
   --surface: #ffffff;
-  --surface-2: #fafbfc;
-  --border: rgba(15, 23, 42, 0.1);
-  --border-strong: rgba(15, 23, 42, 0.18);
-  --text: #14181f;
-  --text-soft: #5b6472;
-  --text-faint: #8b95a5;
-  --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.06);
+  --surface-2: #f8fafc;
+  --border: rgba(15, 23, 42, 0.09);
+  --border-strong: rgba(15, 23, 42, 0.16);
+  --text: #101622;
+  --text-soft: #59616f;
+  --text-faint: #8b93a1;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(15, 23, 42, 0.06);
   --shadow-lg: 0 12px 40px rgba(15, 23, 42, 0.18);
 }
 
+/* ------------------------------------------------------------------ palettes */
+
+/* Light — the neutral daylight look (same as the defaults above, listed so the
+   theme picker can name it explicitly). */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* Dark — the original night look. */
 :root[data-theme="dark"] {
+  color-scheme: dark;
+
   --accent: #7c96ff;
   --accent-strong: #9aaeff;
   --accent-soft: rgba(124, 150, 255, 0.16);
+  --on-accent: #10131a;
   --danger: #ff6b6b;
   --ok: #51cf66;
   --warn: #ffa94d;
 
-  --bg: #16181c;
-  --surface: #1e2126;
-  --surface-2: #24282e;
+  --bg: #131519;
+  --surface: #1b1e23;
+  --surface-2: #22262c;
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.16);
-  --text: #e9ecf1;
-  --text-soft: #a3adbd;
-  --text-faint: #78818f;
+  --text: #e8ecf2;
+  --text-soft: #a2abb9;
+  --text-faint: #77808e;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+/* Paper — warm, low-glare light theme for reading long text. */
+:root[data-theme="paper"] {
+  color-scheme: light;
+
+  --accent: #b45309;
+  --accent-strong: #92400e;
+  --accent-soft: rgba(180, 83, 9, 0.12);
+  --on-accent: #fffaf1;
+  --danger: #c2410c;
+  --ok: #3f8f4a;
+  --warn: #b7791f;
+
+  --bg: #f7f1e6;
+  --surface: #fffdf8;
+  --surface-2: #f2ead9;
+  --border: rgba(120, 90, 50, 0.16);
+  --border-strong: rgba(120, 90, 50, 0.3);
+  --text: #3a3126;
+  --text-soft: #6b5f4c;
+  --text-faint: #97896f;
+  --shadow: 0 1px 2px rgba(93, 70, 36, 0.06), 0 8px 24px rgba(93, 70, 36, 0.08);
+  --shadow-lg: 0 12px 40px rgba(93, 70, 36, 0.2);
+}
+
+/* Midnight — deep blue night theme. */
+:root[data-theme="midnight"] {
+  color-scheme: dark;
+
+  --accent: #63a4ff;
+  --accent-strong: #8bbcff;
+  --accent-soft: rgba(99, 164, 255, 0.18);
+  --on-accent: #06101f;
+  --danger: #ff7b72;
+  --ok: #52d1a4;
+  --warn: #ffb057;
+
+  --bg: #0b1120;
+  --surface: #121a2c;
+  --surface-2: #18233a;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --text: #e6ecf8;
+  --text-soft: #9fb0cb;
+  --text-faint: #708099;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 30px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+/* Forest — dark green theme. */
+:root[data-theme="forest"] {
+  color-scheme: dark;
+
+  --accent: #43c17a;
+  --accent-strong: #6ad79b;
+  --accent-soft: rgba(67, 193, 122, 0.16);
+  --on-accent: #05170e;
+  --danger: #ff7b72;
+  --ok: #4ade80;
+  --warn: #ffc061;
+
+  --bg: #0f1a15;
+  --surface: #16241d;
+  --surface-2: #1d2f26;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --text: #e5f0e9;
+  --text-soft: #a3bdb0;
+  --text-faint: #789386;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 30px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+/* Contrast — maximum legibility: pure black/white with a yellow accent. */
+:root[data-theme="contrast"] {
+  color-scheme: dark;
+
+  --accent: #ffd400;
+  --accent-strong: #ffe25c;
+  --accent-soft: rgba(255, 212, 0, 0.18);
+  --on-accent: #101010;
+  --danger: #ff6b6b;
+  --ok: #6ee787;
+  --warn: #ffb020;
+
+  --bg: #000000;
+  --surface: #0b0b0b;
+  --surface-2: #161616;
+  --border: rgba(255, 255, 255, 0.3);
+  --border-strong: rgba(255, 255, 255, 0.5);
+  --text: #ffffff;
+  --text-soft: #d8d8d8;
+  --text-faint: #a0a0a0;
+  --shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.8);
 }
 
 * {
@@ -1309,4 +1428,419 @@ body.result-body {
 
 .logs-line.bad {
   color: var(--danger);
+}
+
+/* ==========================================================================
+   Look & feel pass
+   --------------------------------------------------------------------------
+   Everything below is presentation only: it refines type, spacing, controls and
+   the per-window chrome. It sits last on purpose so it wins over the original
+   rules without having to touch them.
+   ========================================================================== */
+
+body {
+  font-family: var(--font-ui);
+  line-height: 1.6;
+  letter-spacing: 0.005em;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* Keyboard focus only — mouse clicks stay clean. */
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+.nav-item:focus-visible,
+.option:focus-visible,
+.segmented button:focus-visible,
+.result-view button:focus-visible,
+.logs-level:focus-visible,
+.recorder:focus-visible,
+.switch:focus-visible,
+.theme-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ----------------------------------------------------------------- controls */
+
+.btn {
+  height: 30px;
+  padding: 0 13px;
+  font-weight: 500;
+  transition:
+    background 0.15s var(--ease),
+    border-color 0.15s var(--ease),
+    color 0.15s var(--ease),
+    transform 0.08s var(--ease);
+}
+
+.btn-primary {
+  color: var(--on-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.btn-primary:hover:not(:disabled) {
+  color: var(--on-accent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16);
+}
+
+.btn-sm {
+  height: 26px;
+  padding: 0 10px;
+}
+
+.btn-ghost {
+  color: var(--text-soft);
+}
+
+.input,
+.select,
+.textarea {
+  min-height: 30px;
+  padding: 6px 11px;
+  transition:
+    border-color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+
+.input:hover:not(:focus),
+.select:hover:not(:focus),
+.textarea:hover:not(:focus) {
+  border-color: var(--border-strong);
+}
+
+.input-mono,
+.mono-list,
+.logs-view,
+.endpoint-hint code {
+  font-family: var(--font-mono);
+}
+
+.switch {
+  width: 38px;
+  height: 22px;
+}
+
+.switch[aria-checked="true"]::after {
+  background: var(--on-accent);
+}
+
+.option {
+  border-radius: var(--radius);
+  transition:
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease),
+    transform 0.08s var(--ease);
+}
+
+.option:hover {
+  background: var(--surface-2);
+}
+
+.option[aria-checked="true"] .dot {
+  border-color: var(--accent);
+}
+
+.badge {
+  padding: 2px 8px;
+  font-weight: 500;
+}
+
+/* ------------------------------------------------------------- settings shell */
+
+.settings {
+  grid-template-columns: 190px 1fr;
+}
+
+.sidebar {
+  padding: 16px 12px 12px;
+  gap: 3px;
+}
+
+.brand {
+  padding: 2px 8px 14px;
+}
+
+.brand-mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(58, 92, 255, 0.35);
+}
+
+.brand-name {
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+.nav-item {
+  padding: 8px 10px;
+  font-size: 13.5px;
+  transition:
+    background 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+
+.nav-item[aria-current="true"] {
+  color: var(--on-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.nav-item[aria-current="true"] .nav-icon {
+  opacity: 1;
+}
+
+.nav-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  opacity: 0.75;
+  transition: opacity 0.15s var(--ease);
+}
+
+.nav-item:hover .nav-icon {
+  opacity: 1;
+}
+
+.nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-footer {
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.9;
+}
+
+.content {
+  padding: 24px 28px 44px;
+}
+
+/* Comfortable line length when the window is maximised; no effect at the
+   default size. */
+.content {
+  max-width: 1140px;
+  margin-inline: auto;
+}
+
+.page-title {
+  font-size: 18px;
+  letter-spacing: -0.015em;
+}
+
+.page-lead {
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+.card {
+  margin-bottom: 16px;
+  border-radius: var(--radius);
+}
+
+.card-head {
+  padding: 13px 16px 11px;
+}
+
+.card-title {
+  font-size: 14px;
+}
+
+.card-body {
+  padding: 14px 16px;
+}
+
+.row-title {
+  font-size: 13.5px;
+}
+
+.empty {
+  padding: 34px 12px;
+  font-size: 13px;
+}
+
+.toast {
+  border-radius: var(--radius);
+  backdrop-filter: blur(10px);
+}
+
+/* -------------------------------------------------------------- theme picker */
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease),
+    transform 0.08s var(--ease);
+}
+
+.theme-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.theme-card[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.theme-preview {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 40px;
+  padding: 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.theme-preview span {
+  display: block;
+  border-radius: 3px;
+}
+
+.theme-swatch-dot {
+  width: 10px;
+  height: 10px;
+}
+
+.theme-swatch-bar {
+  flex: 1;
+  height: 7px;
+  opacity: 0.85;
+}
+
+.theme-card-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.theme-card-check {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------- result window */
+
+.result-head {
+  padding: 9px 10px 9px 14px;
+}
+
+.result-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+}
+
+.result-title::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.result-body {
+  padding: 16px 16px 12px;
+}
+
+.result-shot {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.result-text {
+  font-size: inherit;
+  line-height: 1.68;
+}
+
+.result-pane-label {
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.result-src-text {
+  border-left: 2px solid var(--accent-soft);
+}
+
+.result-meta {
+  margin-top: 12px;
+}
+
+.result-foot {
+  gap: 9px;
+  padding: 12px 16px 16px;
+}
+
+.result-view {
+  background: var(--surface);
+}
+
+.result-view button[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.result-view button[data-active="true"]:hover:not(:disabled) {
+  color: var(--accent-strong);
+}
+
+.endpoint-hint {
+  border-style: solid;
+  border-color: var(--border);
+}
+
+.logs-view {
+  line-height: 1.7;
+}
+
+/* ------------------------------------------------------------------ motion */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

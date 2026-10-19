@@ -10,6 +10,7 @@ import { t as translate, type StringKey } from "./lib/i18n";
 import { PROVIDER_KEYS } from "./lib/labels";
 import type { AppConfig, ResultPayload, Stage, StageEvent, TranslateProvider } from "./lib/types";
 import { copyText, formatDuration } from "./lib/util";
+import { applyStoredTheme, applyTheme } from "./lib/theme";
 import "./styles.css";
 
 const BUSY: Stage[] = ["capturing", "ocr", "translate"];
@@ -91,18 +92,7 @@ export function ResultWindow() {
 
   /* ------------------------------------------------------------------- theme */
 
-  useEffect(() => {
-    const theme = config?.ui.theme ?? "system";
-    const query = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => {
-      const dark = theme === "dark" || (theme === "system" && query.matches);
-      document.documentElement.dataset.theme = dark ? "dark" : "light";
-    };
-    apply();
-    if (theme !== "system") return;
-    query.addEventListener("change", apply);
-    return () => query.removeEventListener("change", apply);
-  }, [config?.ui.theme]);
+  useEffect(() => applyTheme(config?.ui.theme), [config?.ui.theme]);
 
   /* ------------------------------------------------------ size to the content */
 
@@ -399,6 +389,10 @@ export function ResultWindow() {
     </div>
   );
 }
+
+// Paint the cached palette before React mounts: the config arrives over IPC a
+// moment later, and a dark theme should not flash light first.
+applyStoredTheme();
 
 const host = document.getElementById("root");
 if (host) createRoot(host).render(<ResultWindow />);

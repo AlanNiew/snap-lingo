@@ -322,6 +322,13 @@ impl AppConfig {
         if !matches!(self.ui.result_view.as_str(), "source" | "translation" | "both") {
             self.ui.result_view = "both".into();
         }
+        // Palettes the UI can paint. Anything else falls back to `system`.
+        if !matches!(
+            self.ui.theme.as_str(),
+            "system" | "light" | "dark" | "paper" | "midnight" | "forest" | "contrast"
+        ) {
+            self.ui.theme = "system".into();
+        }
         self.history.limit = self.history.limit.clamp(0, 1000);
         if self.ocr.base_url.trim().is_empty() {
             self.ocr.base_url = DEFAULT_OPENAI_BASE_URL.into();

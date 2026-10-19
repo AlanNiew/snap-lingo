@@ -85,7 +85,8 @@ export interface UiConfig {
   resultShowImage: boolean;
   closeOnBlur: boolean;
   resultFontSize: number;
-  theme: "system" | "dark" | "light";
+  /** Palette id; `system` follows the OS and resolves to light/dark. */
+  theme: "system" | "light" | "dark" | "paper" | "midnight" | "forest" | "contrast";
   language: "zh" | "en";
 }
 

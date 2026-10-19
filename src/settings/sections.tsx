@@ -16,6 +16,7 @@ import {
   type TranslateProvider,
 } from "../lib/types";
 import { copyText, cx, formatClock, formatDuration, truncate } from "../lib/util";
+import { THEMES, THEME_LABEL_KEYS, THEME_SWATCHES } from "../lib/theme";
 import { useT } from "./context";
 import {
   Card,
@@ -830,6 +831,63 @@ export function CaptureSection({ config, patch }: Base) {
 
 /* ============================================================== appearance */
 
+/** Palette chooser: a card per theme with a live mini preview. */
+function ThemePicker({
+  value,
+  onChange,
+}: {
+  value: AppConfig["ui"]["theme"];
+  onChange: (next: AppConfig["ui"]["theme"]) => void;
+}) {
+  const { t } = useT();
+  return (
+    <div className="theme-grid">
+      {THEMES.map((id) => {
+        const active = value === id;
+        const swatch = id === "system" ? null : THEME_SWATCHES[id];
+        return (
+          <button
+            key={id}
+            type="button"
+            className="theme-card"
+            aria-pressed={active}
+            onClick={() => onChange(id)}
+          >
+            <span
+              className="theme-preview"
+              style={{
+                background:
+                  swatch?.bg ??
+                  "linear-gradient(135deg, #f3f5f9 0 50%, #131519 50% 100%)",
+              }}
+            >
+              <span
+                className="theme-swatch-dot"
+                style={{ background: swatch?.accent ?? "#4c6ef5" }}
+              />
+              <span
+                className="theme-swatch-bar"
+                style={{ background: swatch?.text ?? "#7c96ff" }}
+              />
+              <span
+                className="theme-swatch-dot"
+                style={{
+                  background: swatch?.surface ?? "#ffffff",
+                  boxShadow: "inset 0 0 0 1px rgba(0,0,0,.18)",
+                }}
+              />
+            </span>
+            <span className="theme-card-name">
+              <span>{t(THEME_LABEL_KEYS[id])}</span>
+              {active ? <span className="theme-card-check">✓</span> : null}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function AppearanceSection({ config, patch }: Base) {
   const { t } = useT();
   const setUi = (next: Partial<AppConfig["ui"]>, immediate = false) =>
@@ -839,24 +897,8 @@ export function AppearanceSection({ config, patch }: Base) {
     <>
       <h1 className="page-title">{t("tabAppearance")}</h1>
 
-      <Card title={t("theme")}>
-        <Row title={t("theme")}>
-          <div className="segmented">
-            {[
-              { value: "system", label: t("themeSystem") },
-              { value: "light", label: t("themeLight") },
-              { value: "dark", label: t("themeDark") },
-            ].map((option) => (
-              <button
-                key={option.value}
-                aria-pressed={config.ui.theme === option.value}
-                onClick={() => setUi({ theme: option.value as AppConfig["ui"]["theme"] }, true)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </Row>
+      <Card title={t("theme")} note={t("themeHint")}>
+        <ThemePicker value={config.ui.theme} onChange={(next) => setUi({ theme: next }, true)} />
         <Row title={t("uiLanguage")}>
           <div className="segmented">
             {[
