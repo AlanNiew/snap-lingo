@@ -141,6 +141,10 @@ impl Providers {
         scoped.region = profile.region;
         scoped.model = profile.model;
         scoped.model_tier = tier;
+        let auth = profile.auth.clone();
+        let bearer = profile.bearer.clone();
+        scoped.auth = auth;
+        scoped.bearer = bearer;
         let cfg = &scoped;
         if let Some(url) = text_endpoint(&cfg.provider, cfg) {
             let params: Vec<(&str, String)> = vec![
@@ -165,6 +169,7 @@ impl Providers {
             "microsoft" => self.microsoft(cfg, text).await,
             "google" => self.google(cfg, text).await,
             "youdao" => self.youdao(cfg, text).await,
+            "youdao-llm" => self.youdao_llm(cfg, text).await,
             "baidu" => self.baidu(cfg, text).await,
             "tencent" => self.tencent(cfg, text).await,
             _ => self.translate_chat(cfg, text).await,
@@ -190,6 +195,10 @@ impl Providers {
         scoped.region = profile.region;
         scoped.model = profile.model;
         scoped.model_tier = tier;
+        let auth = profile.auth.clone();
+        let bearer = profile.bearer.clone();
+        scoped.auth = auth;
+        scoped.bearer = bearer;
         let cfg = &scoped;
         if let Some(url) = image_endpoint(&cfg.provider, cfg) {
             let params: Vec<(&str, String)> = vec![
@@ -359,7 +368,7 @@ impl Providers {
                 })
                 .unwrap_or_default();
             if translated.trim().is_empty() {
-                bail!("DeepL 返回了空译文（请检查目标语言代码与套餐类型）。");
+                return Err(empty_reply("DeepL", &resp));
             }
             out.push(translated);
         }
@@ -424,9 +433,10 @@ impl Providers {
             .await?;
         let parsed: Value =
             serde_json::from_str(&resp).context("有道图片翻译返回的内容不是 JSON")?;
-        if let Some(code) = parsed.get("errorCode").and_then(|c| c.as_str()) {
+        if let Some(code) = parsed.get("errorCode") {
+            let code = code_text(code);
             if code != "0" {
-                bail!("有道图片翻译报错 {code}：{}", youdao_error(code));
+                bail!("有道图片翻译报错 {code}：{}", youdao_error(&code));
             }
         }
         let regions = parsed
@@ -442,7 +452,11 @@ impl Providers {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        Ok((collect("context"), collect("tranContent")))
+        let (source, translation) = (collect("context"), collect("tranContent"));
+        if source.trim().is_empty() && translation.trim().is_empty() {
+            return Err(empty_reply("有道图片翻译", &resp));
+        }
+        Ok((source, translation))
     }
 
     /// Baidu picture translation (`api/trans/sdk/picture`): a multipart upload
@@ -497,11 +511,8 @@ impl Providers {
         let parsed: Value =
             serde_json::from_str(&resp).context("百度图片翻译返回的内容不是 JSON")?;
         if let Some(error) = parsed.get("error_code") {
-            let code = error
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| error.to_string());
-            if code != "0" {
+            let code = code_text(error);
+            if code != "0" && code != "52000" {
                 bail!("百度图片翻译报错 {code}：{}", baidu_error(&code));
             }
         }
@@ -526,7 +537,11 @@ impl Providers {
                 })
                 .unwrap_or_default()
         };
-        Ok((text_of("sumSrc", "src"), text_of("sumDst", "dst")))
+        let (source, translation) = (text_of("sumSrc", "src"), text_of("sumDst", "dst"));
+        if source.trim().is_empty() && translation.trim().is_empty() {
+            return Err(empty_reply("百度图片翻译", &resp));
+        }
+        Ok((source, translation))
     }
 
     /// Tencent Cloud end-to-end picture translation (`ImageTranslateLLM`).
@@ -598,6 +613,9 @@ impl Providers {
             .and_then(|t| t.as_str())
             .unwrap_or_default()
             .to_string();
+        if source.trim().is_empty() && translated.trim().is_empty() {
+            return Err(empty_reply("腾讯图片翻译", &resp));
+        }
         Ok((source, translated))
     }
 
@@ -647,7 +665,7 @@ impl Providers {
                 .map(|arr| join_strings(arr, "text"))
                 .unwrap_or_default();
             if translated.trim().is_empty() {
-                bail!("微软翻译返回了空译文：请检查密钥、区域（Region）与目标语言是否匹配。");
+                return Err(empty_reply("微软翻译", &resp));
             }
             out.push(translated);
         }
@@ -679,7 +697,7 @@ impl Providers {
                 .map(|s| unescape_html(&s))
                 .unwrap_or_default();
             if translated.trim().is_empty() {
-                bail!("谷歌翻译返回了空译文：请确认该 API Key 已开通 Cloud Translation API。");
+                return Err(empty_reply("谷歌翻译", &resp));
             }
             out.push(translated);
         }
@@ -729,12 +747,9 @@ impl Providers {
                 )
                 .await?;
             let parsed: Value = serde_json::from_str(&resp).context("有道翻译返回的不是 JSON")?;
-            let code = parsed
-                .get("errorCode")
-                .and_then(|c| c.as_str())
-                .unwrap_or_default();
+            let code = parsed.get("errorCode").map(code_text).unwrap_or_default();
             if code != "0" {
-                bail!("有道翻译报错 {code}：{}", youdao_error(code));
+                bail!("有道翻译报错 {code}：{}", youdao_error(&code));
             }
             let translated = parsed
                 .get("translation")
@@ -742,15 +757,66 @@ impl Providers {
                 .map(|arr| join_strings(arr, ""))
                 .unwrap_or_default();
             if translated.trim().is_empty() {
-                bail!("有道翻译返回了空译文。");
+                return Err(empty_reply("有道翻译", &resp));
             }
             out.push(translated);
         }
         Ok(out.join("\n"))
     }
 
-    /// Baidu's LLM translation (`ait/api/aiTextTranslate`): same credentials and
-    /// md5 signature as the standard API, a JSON body instead of a form.
+    /// Youdao's LLM translation channel (`proxy/http/llm-trans`). The service
+    /// answers as a Server-Sent Events stream; `streamType=full` makes every
+    /// event carry the text so far, so the last one holds the finished
+    /// translation. `handleOption` picks the model (0 = 子曰 pro, 3 = lite).
+    async fn youdao_llm(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
+        require_key(&cfg.api_key, "有道大模型翻译")?;
+        if cfg.api_secret.trim().is_empty() {
+            bail!("有道大模型翻译需要两项凭据：应用 ID 与应用密钥。");
+        }
+        let endpoint = default_or(&cfg.base_url, YOUDAO_LLM_ENDPOINT);
+        let app_key = cfg.api_key.trim().to_string();
+        let app_secret = cfg.api_secret.trim().to_string();
+        let to = youdao_target(&cfg.target_lang);
+        let handle = if cfg.model_tier.trim() == "lite" { "3" } else { "0" };
+
+        let mut out = Vec::new();
+        for chunk in chunk_text(text, CHUNK_CHARS) {
+            let salt = crate::model::new_id();
+            let curtime = (crate::model::now_ms() / 1000).to_string();
+            let input = youdao_input(&chunk);
+            let sign = sha256_hex(&format!("{app_key}{input}{salt}{curtime}{app_secret}"));
+            let body = form_encode(&[
+                ("i", chunk.as_str()),
+                ("from", "auto"),
+                ("to", to.as_str()),
+                ("appKey", app_key.as_str()),
+                ("salt", salt.as_str()),
+                ("sign", sign.as_str()),
+                ("signType", "v3"),
+                ("curtime", curtime.as_str()),
+                ("streamType", "full"),
+                ("handleOption", handle),
+            ]);
+            let resp = self
+                .send_with_retry(
+                    || {
+                        self.client
+                            .post(&endpoint)
+                            .header("Content-Type", "application/x-www-form-urlencoded")
+                            .header("Accept", "text/event-stream")
+                            .body(body.clone())
+                    },
+                    "有道大模型翻译",
+                )
+                .await?;
+            out.push(parse_youdao_llm(&resp)?);
+        }
+        Ok(out.join("\n"))
+    }
+
+    /// Baidu's LLM translation (`ait/api/aiTextTranslate`). Two ways to
+    /// authenticate: the md5 signature shared with the classic API, or an
+    /// `Authorization: Bearer <API Key>` header created in the console.
     async fn baidu_llm(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
         let endpoint = if cfg.base_url.trim().is_empty() {
             "https://fanyi-api.baidu.com/ait/api/aiTextTranslate".to_string()
@@ -759,38 +825,65 @@ impl Providers {
         };
         let app_id = cfg.api_key.trim().to_string();
         let key = cfg.api_secret.trim().to_string();
+        let bearer = cfg.bearer.trim().to_string();
+        // `key` is the explicit choice; a filled-in Bearer key also implies it.
+        let key_auth = cfg.auth.trim() == "key" || (key.is_empty() && !bearer.is_empty());
+        if key_auth {
+            if bearer.is_empty() {
+                bail!("百度大模型翻译选择了「API Key」鉴权，请在设置里填写控制台创建的 API Key。");
+            }
+        } else if key.is_empty() {
+            bail!("百度大模型翻译需要应用密钥，或把鉴权方式改为「API Key」。");
+        }
         let to = baidu_target(&cfg.target_lang);
 
         let mut out = Vec::new();
         for chunk in chunk_text(text, CHUNK_CHARS) {
             let salt = crate::model::new_id();
-            let sign = md5_hex(&format!("{app_id}{chunk}{salt}{key}"));
-            let body = json!({
-                "appid": app_id,
-                "from": "auto",
-                "to": to,
-                "q": chunk,
-                "salt": salt,
-                "sign": sign,
-            });
+            let body = if key_auth {
+                json!({
+                    "appid": app_id,
+                    "from": "auto",
+                    "to": to,
+                    "q": chunk,
+                    "model_type": "llm",
+                })
+            } else {
+                let sign = md5_hex(&format!("{app_id}{chunk}{salt}{key}"));
+                json!({
+                    "appid": app_id,
+                    "from": "auto",
+                    "to": to,
+                    "q": chunk,
+                    "salt": salt,
+                    "sign": sign,
+                    "model_type": "llm",
+                })
+            };
             let resp = self
                 .send_with_retry(
-                    || self.client.post(&endpoint).json(&body),
+                    || {
+                        let request = self.client.post(&endpoint).json(&body);
+                        if key_auth {
+                            request.header("Authorization", format!("Bearer {bearer}"))
+                        } else {
+                            request
+                        }
+                    },
                     "百度大模型翻译",
                 )
                 .await?;
             let parsed: Value =
                 serde_json::from_str(&resp).context("百度大模型翻译返回的内容不是 JSON")?;
-            if let Some(code) = parsed.get("error_code").and_then(|c| c.as_str()) {
-                bail!("百度大模型翻译报错 {code}：{}", baidu_error(code));
+            // 52000 is success for this endpoint; 0 and a missing code are fine too.
+            if let Some(code) = baidu_error_code(&parsed) {
+                bail!("百度大模型翻译报错 {code}：{}", baidu_error(&code));
             }
-            let translated = parsed
-                .get("trans_result")
-                .and_then(|t| t.as_array())
+            let translated = trans_segments(&parsed)
                 .map(|arr| join_strings(arr, "dst"))
                 .unwrap_or_default();
             if translated.trim().is_empty() {
-                bail!("百度大模型翻译返回了空译文。");
+                return Err(empty_reply("百度大模型翻译", &resp));
             }
             out.push(translated);
         }
@@ -841,16 +934,14 @@ impl Providers {
                 )
                 .await?;
             let parsed: Value = serde_json::from_str(&resp).context("百度翻译返回的不是 JSON")?;
-            if let Some(code) = parsed.get("error_code").and_then(|c| c.as_str()) {
-                bail!("百度翻译报错 {code}：{}", baidu_error(code));
+            if let Some(code) = baidu_error_code(&parsed) {
+                bail!("百度翻译报错 {code}：{}", baidu_error(&code));
             }
-            let translated = parsed
-                .get("trans_result")
-                .and_then(|t| t.as_array())
+            let translated = trans_segments(&parsed)
                 .map(|arr| join_strings(arr, "dst"))
                 .unwrap_or_default();
             if translated.trim().is_empty() {
-                bail!("百度翻译返回了空译文。");
+                return Err(empty_reply("百度翻译", &resp));
             }
             out.push(translated);
         }
@@ -923,7 +1014,7 @@ impl Providers {
                 .unwrap_or_default()
                 .to_string();
             if translated.trim().is_empty() {
-                bail!("腾讯翻译返回了空译文。");
+                return Err(empty_reply("腾讯翻译", &resp));
             }
             out.push(translated);
         }
@@ -1098,12 +1189,24 @@ impl Providers {
             Err(err) => return Err(err),
         };
 
-        let parsed: Value = serde_json::from_str(&raw).context("响应不是合法 JSON")?;
-        let message = parsed
+        let parsed: Value = match serde_json::from_str(&raw) {
+            Ok(value) => value,
+            Err(err) => {
+                log::error!("聊天补全 响应体：{}", truncate(raw.trim(), 1200));
+                return Err(anyhow!("响应不是合法 JSON：{err}"));
+            }
+        };
+        let message = match parsed
             .get("choices")
             .and_then(|c| c.get(0))
             .and_then(|c| c.get("message"))
-            .ok_or_else(|| anyhow!("响应缺少 choices[0].message：{}", truncate(&raw, 400)))?;
+        {
+            Some(message) => message,
+            None => {
+                log::error!("聊天补全 响应体：{}", truncate(raw.trim(), 1200));
+                return Err(anyhow!("响应缺少 choices[0].message。"));
+            }
+        };
 
         // `content` may be a string or an array of parts depending on provider.
         let content = match message.get("content") {
@@ -1129,6 +1232,7 @@ impl Providers {
                 .and_then(|c| c.get("finish_reason"))
                 .and_then(|f| f.as_str())
                 .unwrap_or("unknown");
+            log::error!("聊天补全 响应体：{}", truncate(raw.trim(), 1200));
             bail!("模型返回了空内容（finish_reason={finish}）。");
         }
         Ok(content)
@@ -1162,6 +1266,14 @@ impl Providers {
                     if status.is_success() {
                         return Ok(body);
                     }
+                    // The log is the only place a user can see what an engine
+                    // really answered, so make the body part of it whenever the
+                    // request failed.
+                    log::error!(
+                        "{what} 响应体（HTTP {}）：{}",
+                        status.as_u16(),
+                        truncate(body.trim(), 1200)
+                    );
                     Err(anyhow!(explain_http_error(status.as_u16(), &body)))
                 }
             };
@@ -1193,6 +1305,7 @@ const DEEPL_PRO_ENDPOINT: &str = "https://api.deepl.com/v2/translate";
 const MICROSOFT_ENDPOINT: &str = "https://api.cognitive.microsofttranslator.com/translate";
 const GOOGLE_ENDPOINT: &str = "https://translation.googleapis.com/language/translate/v2";
 const YOUDAO_ENDPOINT: &str = "https://openapi.youdao.com/api";
+const YOUDAO_LLM_ENDPOINT: &str = "https://openapi.youdao.com/proxy/http/llm-trans";
 const YOUDAO_IMAGE_ENDPOINT: &str = "https://openapi.youdao.com/ocrtransapi";
 const BAIDU_ENDPOINT: &str = "https://fanyi-api.baidu.com/api/trans/vip/translate";
 const BAIDU_LLM_ENDPOINT: &str = "https://fanyi-api.baidu.com/ait/api/aiTextTranslate";
@@ -1238,6 +1351,7 @@ pub fn text_endpoint(provider: &str, cfg: &TranslateConfig) -> Option<String> {
         "microsoft" => own(MICROSOFT_ENDPOINT),
         "google" => own(GOOGLE_ENDPOINT),
         "youdao" => own(YOUDAO_ENDPOINT),
+        "youdao-llm" => own(YOUDAO_LLM_ENDPOINT),
         "baidu" => {
             if profile.tier("baidu") == "llm" {
                 BAIDU_LLM_ENDPOINT.to_string()
@@ -1302,6 +1416,15 @@ pub fn tier_note(provider: &str, tier: &str, image: bool) -> Option<String> {
                 "0（传统翻译）"
             }
         ),
+        ("youdao-llm", false) => format!(
+            "handleOption={}（流式接口，自动取最终译文）",
+            if tier == "lite" {
+                "3（lite 轻量模型）"
+            } else {
+                "0（pro 子曰翻译大模型）"
+            }
+        ),
+        ("youdao-llm", true) => "大模型翻译渠道不提供一步图片翻译".to_string(),
         ("tencent", false) => "档位只影响一步图片翻译（Mode）".to_string(),
         ("tencent", true) => format!(
             "Mode={}",
@@ -1739,6 +1862,7 @@ pub fn provider_label(provider: &str) -> &'static str {
         "microsoft" => "微软翻译",
         "google" => "谷歌翻译",
         "youdao" => "有道翻译",
+        "youdao-llm" => "有道大模型翻译",
         "baidu" => "百度翻译",
         "tencent" => "腾讯翻译",
         "winocr" => "Windows 离线 OCR",
@@ -1873,6 +1997,104 @@ fn unescape_html(text: &str) -> String {
 }
 
 /// Youdao v3 signs a trimmed form of the query.
+/// The textual form of an error code — engines send it as a string or a number.
+fn code_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.trim().to_string(),
+        other => other.to_string().trim_matches('"').trim().to_string(),
+    }
+}
+
+/// Text segments wherever an engine buried them: `fanyi-api` answers at the top
+/// level, the 智能云 flavour nests them in `result`, and some LLM replies in
+/// `data`. Returns the first list that exists.
+fn trans_segments(value: &Value) -> Option<&Vec<Value>> {
+    for path in ["trans_result", "result.trans_result", "data.trans_result"] {
+        let mut node = value;
+        let mut walked = true;
+        for key in path.split('.') {
+            match node.get(key) {
+                Some(next) => node = next,
+                None => {
+                    walked = false;
+                    break;
+                }
+            }
+        }
+        if walked {
+            if let Some(list) = node.as_array() {
+                return Some(list);
+            }
+        }
+    }
+    None
+}
+
+/// The error code of a Baidu answer with their success codes normalised away:
+/// the classic API omits `error_code`, the LLM endpoint answers `52000`, and
+/// older docs use `0`.
+fn baidu_error_code(value: &Value) -> Option<String> {
+    let code = match value.get("error_code") {
+        Some(code) => code_text(code),
+        None => return None,
+    };
+    if code.is_empty() || code == "0" || code == "52000" {
+        None
+    } else {
+        Some(code)
+    }
+}
+
+/// Funnel for every "HTTP 200 but unusable answer": the body always ends up in
+/// the log, because the log is the only place a user can see what came back.
+fn empty_reply(what: &str, body: &str) -> anyhow::Error {
+    log::error!("{what} 响应体：{}", truncate(body.trim(), 1200));
+    match extract_error_message(body) {
+        Some(message) => anyhow!("{what}没有返回译文（接口提示：{message}）。"),
+        None => anyhow!("{what}返回了空译文。"),
+    }
+}
+
+/// Pull the finished translation out of Youdao's LLM (SSE) answer. Events look
+/// like `data: {"code":"0","data":{"transFull":"…","langType":"…"}}`; with
+/// `streamType=full` the last event carries the whole translation. A plain JSON
+/// body (some deployments) is accepted too.
+fn parse_youdao_llm(body: &str) -> Result<String> {
+    let mut last = String::new();
+    for line in body.lines() {
+        let line = line.trim();
+        let json = match line.strip_prefix("data:") {
+            Some(rest) => rest.trim(),
+            None => line,
+        };
+        if json.is_empty() || json == "[DONE]" || !json.starts_with('{') {
+            continue;
+        }
+        let parsed: Value = match serde_json::from_str(json) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let code = parsed.get("code").map(code_text).unwrap_or_default();
+        if !code.is_empty() && code != "0" {
+            bail!("有道大模型翻译报错 {code}：{}", youdao_error(&code));
+        }
+        let data = parsed.get("data").unwrap_or(&parsed);
+        // `transFull` is the finished text; `transIncre` only the newest bit.
+        for key in ["transFull", "transResult", "translation", "result"] {
+            if let Some(text) = data.get(key).and_then(|t| t.as_str()) {
+                if !text.trim().is_empty() {
+                    last = text.trim().to_string();
+                }
+                break;
+            }
+        }
+    }
+    if last.trim().is_empty() {
+        return Err(empty_reply("有道大模型翻译", body));
+    }
+    Ok(last)
+}
+
 fn youdao_input(query: &str) -> String {
     let chars: Vec<char> = query.chars().collect();
     if chars.len() <= 20 {
@@ -2195,5 +2417,71 @@ mod tests {
             "请求被拒绝： HTTP 400: unsupported parameter response_format"
         )));
         assert!(!is_param_rejection(&anyhow!("RETRY: 触发限流（429）")));
+    }
+
+    #[test]
+    fn baidu_segments_are_found_wherever_they_are_buried() {
+        // The classic API answers at the top level…
+        let flat = serde_json::json!({ "trans_result": [{ "src": "a", "dst": "甲" }] });
+        assert_eq!(
+            trans_segments(&flat).map(|list| join_strings(list, "dst")),
+            Some("甲".to_string())
+        );
+        // …the 智能云 flavour nests them in `result`…
+        let nested = serde_json::json!({ "result": { "trans_result": [{ "dst": "乙" }] } });
+        assert_eq!(
+            trans_segments(&nested).map(|list| join_strings(list, "dst")),
+            Some("乙".to_string())
+        );
+        // …and some replies wrap them in `data`.
+        let data = serde_json::json!({ "data": { "trans_result": [{ "dst": "丙" }] } });
+        assert_eq!(
+            trans_segments(&data).map(|list| join_strings(list, "dst")),
+            Some("丙".to_string())
+        );
+        assert!(trans_segments(&serde_json::json!({ "code": "0" })).is_none());
+    }
+
+    #[test]
+    fn baidu_success_codes_are_not_mistaken_for_errors() {
+        // No code at all (the classic API), 0 and 52000 (the LLM endpoint) are
+        // all successes; anything else has to surface as an error.
+        assert!(baidu_error_code(&serde_json::json!({})).is_none());
+        assert!(baidu_error_code(&serde_json::json!({ "error_code": "0" })).is_none());
+        assert!(baidu_error_code(&serde_json::json!({ "error_code": "52000" })).is_none());
+        assert!(baidu_error_code(&serde_json::json!({ "error_code": 52000 })).is_none());
+        assert_eq!(
+            baidu_error_code(&serde_json::json!({ "error_code": "54001" })),
+            Some("54001".to_string())
+        );
+        assert_eq!(
+            baidu_error_code(&serde_json::json!({ "error_code": 54004 })),
+            Some("54004".to_string())
+        );
+    }
+
+    #[test]
+    fn youdao_llm_stream_yields_the_finished_translation() {
+        // `streamType=full` repeats the whole text in every event, so the last
+        // non-empty `transFull` wins.
+        let stream = concat!(
+            "data: {\"code\":\"0\",\"data\":{\"transFull\":\"你\",\"langType\":\"en2zh-CHS\"}}\n\n",
+            "data: {\"code\":\"0\",\"data\":{\"transFull\":\"你好\"}}\n\n",
+            "data: [DONE]\n",
+        );
+        assert_eq!(parse_youdao_llm(stream).unwrap(), "你好");
+        // A plain JSON body works as well.
+        assert_eq!(
+            parse_youdao_llm("{\"code\":\"0\",\"data\":{\"transResult\":\"直接返回\"}}").unwrap(),
+            "直接返回"
+        );
+        // An error code becomes the error message.
+        let failed = "data: {\"code\":\"207\",\"data\":{}}";
+        assert!(parse_youdao_llm(failed)
+            .unwrap_err()
+            .to_string()
+            .contains("207"));
+        // Nothing usable is an error too.
+        assert!(parse_youdao_llm("data: {\"code\":\"0\",\"data\":{}}").is_err());
     }
 }

@@ -18,11 +18,11 @@ SnapLingo 是一个 Windows 桌面小工具，常驻托盘，**启动快、内�
 | 出错处理 | 任何失败都会**弹出结果窗口并同时发一条系统通知**说明原因，结果窗口内置「重试」；网络请求失败自动重试 3 次，绝不静默失败 |
 | 防卡死 | 每个耗时步骤都有硬超时（截图 15s、识别 30s、翻译 120s、整体 150s）；框选 3 分钟未确认自动取消；若真的卡住（连续 4 分钟无响应）程序会自行退出，**绝不会让选区窗口把桌面锁死** |
 | OCR | ① Windows 内置 OCR（`Windows.Media.Ocr`，离线、免费）② 视觉大模型（OpenAI 兼容 `/chat/completions`，图片以 base64 传入）③ 本地 OCR 服务（Umi-OCR 等本机服务，模型跑在自己电脑上）④ 一步图片翻译：由有道 / 百度 / 腾讯直接读图，本机不参与 |
-| 翻译 | ① OpenAI 兼容接口（内置 22 家预设：NVIDIA NIM、智谱、DeepSeek、OpenCode Zen、百度千帆、腾讯混元、讯飞星火、Gemini、Groq、Mistral、xAI、Together、DeepInfra、Cerebras、Fireworks…）② DeepL（Free / Pro）③ 微软翻译（Azure）④ 谷歌翻译 ⑤ 有道智云 ⑥ 百度翻译 ⑦ 腾讯云翻译（TMT）⑧ 关闭（只 OCR 不翻译） |
+| 翻译 | ① OpenAI 兼容接口（内置 22 家预设：NVIDIA NIM、智谱、DeepSeek、OpenCode Zen、百度千帆、腾讯混元、讯飞星火、Gemini、Groq、Mistral、xAI、Together、DeepInfra、Cerebras、Fireworks…）② DeepL（Free / Pro）③ 微软翻译（Azure）④ 谷歌翻译 ⑤ 有道智云 ⑥ 有道大模型翻译（子曰，Pro / Lite）⑦ 百度翻译（通用 / 大模型，支持 API Key 鉴权）⑧ 腾讯云翻译（TMT）⑨ 关闭（只 OCR 不翻译） |
 | 一步图片翻译 | 有道 / 百度 / 腾讯支持「递交图片、一次拿回原文 + 译文」，在「识别引擎」下拉里直接可选；需在各家控制台单独申请该服务（未开通会自动回退到本机识别 + 文本翻译） |
 | 结果窗口 | 无边框置顶卡片，自动按内容调整高度；底部一排「原文 / 译文 / 对照」三态切换，随时只看一边或对照查看；复制、重新翻译、`Esc` 关闭、失焦自动关闭（可关） |
 | 历史记录 | 本地保存最近 N 条识别结果，可搜索查看、单条删除或清空 |
-| 运行日志 | 内置日志页（托盘「查看日志…」或设置 → **日志**）：本地时间戳、**最新的在最上面**、按错误 / 警告 / 信息 / 调试筛选，逐次记录走的渠道、实际调用的方法 + 地址与失败原因 |
+| 运行日志 | 内置日志页（托盘「查看日志…」或设置 → **日志**）：本地时间戳、**最新的在最上面**、按错误 / 警告 / 信息 / 调试筛选，逐次记录走的渠道、实际调用的方法 + 地址，**失败时连接口返回的响应体一起记下来**（排查签名 / 配额 / 语言问题时最有用） |
 | 其它 | 开机自启、深浅色主题、中/英文界面、结果字号、自动复制、自定义 Prompt、API Key 一键探测/模型列表拉取 |
 
 ---
@@ -99,7 +99,7 @@ npm run tauri build
     "prompt": ""
   },
   "translate": {
-    "provider": "openai",            // openai | deepl | microsoft | google | youdao | baidu | tencent | none
+    "provider": "openai",            // openai | deepl | microsoft | google | youdao | youdao-llm | baidu | tencent | none
     "profiles": {                    // 每个渠道各存各的凭证，互不串用
       "openai": {
         "baseUrl": "https://integrate.api.nvidia.com/v1",
@@ -110,7 +110,9 @@ npm run tauri build
       },
       "deepl":   { "baseUrl": "", "apiKey": "", "apiSecret": "", "region": "", "model": "" },
       "youdao":  { "apiKey": "", "apiSecret": "" },
+      "youdao-llm": { "apiKey": "", "apiSecret": "", "modelTier": "pro" },   // pro | lite
       "baidu":   { "apiKey": "", "apiSecret": "", "modelTier": "standard" }, // standard | llm
+      "baidu":   { "apiKey": "", "apiSecret": "", "modelTier": "llm", "auth": "key", "bearer": "" }, // 大模型版可选 API Key 鉴权
       "tencent": { "apiKey": "", "apiSecret": "", "region": "", "modelTier": "llm" } // llm | lite
     },
     "targetLang": "zh-CN",
@@ -147,7 +149,8 @@ npm run tauri build
 | 微软翻译（Azure） | API Key、区域 | portal.azure.com（创建「文本翻译」资源） | 区域例如 `eastasia`；每月有免费额度 |
 | 谷歌翻译 | API Key | console.cloud.google.com（API 凭证） | Google Cloud Translation v2，密钥作为 URL 参数发送，建议在控制台限制该密钥 |
 | 有道智云 | 应用 ID、应用密钥 | ai.youdao.com（控制台 → 应用总览） | 文本翻译 v3，签名走 `sha256`；**支持一步图片翻译** |
-| 百度翻译 | AppID、密钥 | fanyi-api.baidu.com | 签名走 `md5`；**支持一步图片翻译**，可选通用文本 / 大模型 |
+| 有道大模型翻译 | 应用 ID、应用密钥 | ai.youdao.com（控制台 → 应用总览 → 大模型翻译） | 「子曰」大模型通道，服务版本可选 **Pro / Lite**；接口是流式（SSE），程序自动取最终译文；需在控制台开通并充值 |
+| 百度翻译 | AppID、密钥 | fanyi-api.baidu.com | 签名走 `md5`；**支持一步图片翻译**，服务版本可选通用文本 / 大模型；大模型版也可改用 **API Key（Bearer）** 鉴权，无需算签名 |
 | 腾讯云翻译 | SecretId、SecretKey、区域（可选） | console.cloud.tencent.com（访问管理 → API 密钥） | 机器翻译 TMT，签名走 TC3-HMAC-SHA256，每月 500 万字符免费；**支持一步图片翻译** |
 
 ### 一步图片翻译（不做本地 OCR）
@@ -179,6 +182,8 @@ npm run tauri build
 | 大模型翻译 | `ait/api/aiTextTranslate` | 术语与语气更自然，需在控制台开通「大模型翻译」 |
 
 腾讯云也提供两档：**大模型版翻译（默认，更准）** 与 **极速版（更快）**。有道则用同一套图片接口的 `translateOption` 参数区分（大模型结果 / 普通结果）。
+
+**有道「大模型翻译」渠道**（独立于上面的有道智云文本翻译）：走 `proxy/http/llm-trans`，是**流式（SSE）接口**，程序用 `streamType=full` 收完整个流、取最后一条 `transFull` 作为译文；服务版本可选 **Pro（子曰翻译大模型）/ Lite（轻量版）**。它不提供图片翻译，因此「一步图片翻译」里不会出现它。
 
 > 腾讯云图片翻译的免费额度与文本翻译共用；有道图片翻译按调用次数计费（3600 次/小时上限）；百度图片翻译的免费额度以控制台为准。
 
@@ -305,6 +310,12 @@ snap-lingo/
 
 **翻译报错 401 / 403**
 接口地址或 Key 不对。设置页里点「测试连接」可快速定位；注意接口地址需要包含 `/v1` 这类版本前缀（如 `https://xxx/v1`）。
+
+**想逐个渠道排查（推荐做法）**
+1. 设置 → **翻译** 页，把「渠道」下拉切到要测的那家，填好凭据后点 **测试连接**（用一段示例文本走一次真实调用，会显示耗时与返回的译文）；
+2. 失败就去 **日志** 页看那一行 `响应体（HTTP xxx）：…` —— 里面是服务商原样返回的内容，错误码、签名提示、配额说明都在里面（响应体的记录是新加的：以前只记状态码，看不出原因）；
+3. **文本翻译**和**图片翻译**是两套接口：要验证图片翻译，需在**识别**页把「识别引擎」选成「由翻译渠道完成」，再按快捷键截一次图；
+4. 「档位」（通用 / 大模型、Pro / Lite）可能对应**不同地址或不同参数**，设置页的「实际调用」提示、以及日志里的「本次任务」都会写明这次到底请求了哪个地址。
 
 **翻译特别慢或超时**
 单个请求超时 60 秒、最多重试 3 次（429 / 5xx / 网络错误），整体任务超过 150 秒会中止并提示「重试」。长文本会自动分块，代理/中转服务建议换成响应更快的模型。

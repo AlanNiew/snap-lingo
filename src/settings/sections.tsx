@@ -583,7 +583,16 @@ export function TranslateSection({ config, patch, notify }: Base) {
     }, immediate);
 
   const secretLabel =
-    provider === "youdao" ? t("secretYoudao") : provider === "baidu" ? t("secretBaidu") : t("secretTencent");
+    provider === "youdao" || provider === "youdao-llm"
+      ? t("secretYoudao")
+      : provider === "baidu"
+        ? t("secretBaidu")
+        : t("secretTencent");
+  // Baidu's LLM endpoint authenticates either by signature or by a Bearer API
+  // Key, so only the credential that is actually used is shown.
+  const baiduLlm = provider === "baidu" && (profile.modelTier || "standard") === "llm";
+  const keyAuth = baiduLlm && (profile.auth || "sign") === "key";
+  const showSecret = has("apiSecret") && !keyAuth;
 
   return (
     <>
@@ -675,8 +684,8 @@ export function TranslateSection({ config, patch, notify }: Base) {
                 hideLabel={t("hideKey")}
               />
             </Field>
-            {has("apiSecret") ? (
-              <Field label={secretLabel}>
+            {showSecret ? (
+              <Field label={secretLabel} hint={baiduLlm ? t("authHint") : undefined}>
                 <SecretInput
                   value={profile.apiSecret}
                   onChange={(value) => setProfile({ apiSecret: value })}
@@ -707,6 +716,29 @@ export function TranslateSection({ config, patch, notify }: Base) {
                     { value: "free", label: t("deeplFree") },
                     { value: "pro", label: t("deeplPro") },
                   ]}
+                />
+              </Field>
+            ) : null}
+            {baiduLlm ? (
+              <Field label={t("authTitle")} hint={t("authHint")}>
+                <Select
+                  value={profile.auth || "sign"}
+                  onChange={(value) => setProfile({ auth: value }, true)}
+                  options={[
+                    { value: "sign", label: t("authSign") },
+                    { value: "key", label: t("authKey") },
+                  ]}
+                />
+              </Field>
+            ) : null}
+            {keyAuth ? (
+              <Field label={t("bearerTitle")} hint={t("bearerHint")}>
+                <SecretInput
+                  value={profile.bearer}
+                  onChange={(value) => setProfile({ bearer: value })}
+                  placeholder="…"
+                  showLabel={t("showKey")}
+                  hideLabel={t("hideKey")}
                 />
               </Field>
             ) : null}

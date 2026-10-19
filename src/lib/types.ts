@@ -7,6 +7,7 @@ export type TranslateProvider =
   | "microsoft"
   | "google"
   | "youdao"
+  | "youdao-llm"
   | "baidu"
   | "tencent"
   | "none";
@@ -35,8 +36,13 @@ export interface TranslateProfile {
   /** Azure Translator region / Tencent region. */
   region: string;
   model: string;
-  /** Engine tier: "standard" | "llm" (Baidu, Youdao) or "llm" | "lite" (Tencent). */
+  /** Engine tier: "standard" | "llm" (Baidu) or "llm" | "lite" | "pro" (Youdao, Tencent). */
   modelTier: string;
+  /** How the request is authenticated: "" / "sign" (app id + secret) or "key"
+   *  (Bearer). Only Baidu's LLM endpoint offers both. */
+  auth: string;
+  /** The Bearer credential: Baidu's `API Key`. */
+  bearer: string;
 }
 
 /** A blank profile, used while the user is still filling one in. */
@@ -47,6 +53,8 @@ export const EMPTY_PROFILE: TranslateProfile = {
   region: "",
   model: "",
   modelTier: "",
+  auth: "",
+  bearer: "",
 };
 
 export interface TranslateConfig {

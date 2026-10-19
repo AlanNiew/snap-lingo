@@ -65,6 +65,11 @@ pub struct TranslateProfile {
     /// Service tier of the engine: `standard` / `llm` (Baidu, Youdao) or
     /// `llm` / `lite` (Tencent). Empty means the engine's own default.
     pub model_tier: String,
+    /// How the request is authenticated: empty / `sign` (app id + secret) or
+    /// `key` (Bearer token). Only Baidu's LLM endpoint offers both.
+    pub auth: String,
+    /// The Bearer credential: Baidu's `API Key` created in the console.
+    pub bearer: String,
 }
 
 impl Default for TranslateProfile {
@@ -76,6 +81,8 @@ impl Default for TranslateProfile {
             region: String::new(),
             model: String::new(),
             model_tier: String::new(),
+            auth: String::new(),
+            bearer: String::new(),
         }
     }
 }
@@ -88,6 +95,7 @@ impl TranslateProfile {
             && self.api_secret.trim().is_empty()
             && self.region.trim().is_empty()
             && self.model.trim().is_empty()
+            && self.bearer.trim().is_empty()
     }
 
     /// The tier this engine will actually use, with blanks resolved.
@@ -102,6 +110,8 @@ impl TranslateProfile {
             "baidu" => "standard",
             // Youdao's and Tencent's picture translation are best on the LLM path.
             "youdao" | "tencent" => "llm",
+            // The dedicated LLM channel is always on the pro model by default.
+            "youdao-llm" => "pro",
             _ => "",
         }
         .to_string()
@@ -111,7 +121,8 @@ impl TranslateProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TranslateConfig {
-    /// `openai` | `deepl` | `microsoft` | `google` | `youdao` | `baidu` | `tencent` | `none`
+    /// `openai` | `deepl` | `microsoft` | `google` | `youdao` | `youdao-llm`
+    /// | `baidu` | `tencent` | `none`
     pub provider: String,
     /// One entry per engine, keyed by provider id.
     pub profiles: BTreeMap<String, TranslateProfile>,
@@ -134,6 +145,12 @@ pub struct TranslateConfig {
     /// profile just before a request is made. Never written to disk.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub model_tier: String,
+    /// Runtime carrier only: the authentication mode of the selected engine.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub auth: String,
+    /// Runtime carrier only: the Bearer credential of the selected engine.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub bearer: String,
 }
 
 impl TranslateConfig {
@@ -176,6 +193,8 @@ impl Default for TranslateConfig {
             region: String::new(),
             model: String::new(),
             model_tier: String::new(),
+            auth: String::new(),
+            bearer: String::new(),
         }
     }
 }
@@ -282,7 +301,15 @@ impl AppConfig {
         }
         if !matches!(
             self.translate.provider.as_str(),
-            "openai" | "deepl" | "microsoft" | "google" | "youdao" | "baidu" | "tencent" | "none"
+            "openai"
+                | "deepl"
+                | "microsoft"
+                | "google"
+                | "youdao"
+                | "youdao-llm"
+                | "baidu"
+                | "tencent"
+                | "none"
         ) {
             self.translate.provider = "openai".into();
         }
@@ -315,6 +342,8 @@ impl AppConfig {
             region: std::mem::take(&mut self.translate.region),
             model: std::mem::take(&mut self.translate.model),
             model_tier: String::new(),
+            auth: String::new(),
+            bearer: String::new(),
         };
         if !legacy.is_blank() {
             let id = self.translate.provider.clone();
@@ -353,9 +382,14 @@ impl AppConfig {
             p.model = p.model.trim().to_string();
             // Unknown tiers fall back to the engine's own default at use time.
             p.model_tier = match p.model_tier.trim() {
-                "llm" | "lite" | "standard" => p.model_tier.trim().to_string(),
+                "llm" | "lite" | "standard" | "pro" => p.model_tier.trim().to_string(),
                 _ => String::new(),
             };
+            p.auth = match p.auth.trim() {
+                "sign" | "key" => p.auth.trim().to_string(),
+                _ => String::new(),
+            };
+            p.bearer = p.bearer.trim().to_string();
         }
         if self.translate.target_lang.trim().is_empty() {
             self.translate.target_lang = "zh-CN".into();
@@ -404,9 +438,18 @@ impl AppConfig {
         let tr_ok = match tr.provider.as_str() {
             "none" => true,
             "deepl" | "microsoft" | "google" => !p.api_key.trim().is_empty(),
-            // These three sign the request with a second credential.
-            "youdao" | "baidu" | "tencent" => {
+            // These engines sign the request with a second credential.
+            "youdao" | "youdao-llm" | "tencent" => {
                 !p.api_key.trim().is_empty() && !p.api_secret.trim().is_empty()
+            }
+            // Baidu's LLM endpoint can also authenticate with a Bearer API Key,
+            // in which case only the app id and that key are needed.
+            "baidu" => {
+                if p.tier("baidu") == "llm" && p.auth.trim() == "key" {
+                    !p.api_key.trim().is_empty() && !p.bearer.trim().is_empty()
+                } else {
+                    !p.api_key.trim().is_empty() && !p.api_secret.trim().is_empty()
+                }
             }
             _ => !p.api_key.trim().is_empty() && !p.model.trim().is_empty(),
         };
