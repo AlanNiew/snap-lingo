@@ -231,7 +231,7 @@ pub fn describe_endpoints(config: AppConfig) -> Endpoints {
         "vision" => EndpointInfo {
             method: "POST".into(),
             url: providers::ocr_endpoint(&config.ocr).unwrap_or_else(|| "—".into()),
-            note: format!("视觉大模型{}", model_note(&config.ocr.model)),
+            note: format!("视觉大模型{}", model_note(&config.ocr.active().model)),
         },
         other => match config.picture_provider() {
             Some(id) => EndpointInfo {

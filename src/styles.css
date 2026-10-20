@@ -764,6 +764,11 @@ textarea {
   color: var(--text-soft);
 }
 
+.history-search {
+  margin-bottom: 6px;
+  max-width: 340px;
+}
+
 .history-item {
   display: flex;
   gap: 10px;

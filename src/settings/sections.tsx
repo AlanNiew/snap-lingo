@@ -1076,8 +1076,24 @@ export function HistorySection({
   reloadHistory,
 }: Base & { history: HistoryItem[]; reloadHistory: () => void }) {
   const { t } = useT();
+  const [query, setQuery] = useState("");
   const setHistory = (next: Partial<AppConfig["history"]>, immediate = false) =>
     patch((cfg) => ({ ...cfg, history: { ...cfg.history, ...next } }), immediate);
+
+  // History grows to a few hundred entries, so let the user narrow it down by
+  // either side of a translation instead of scrolling.
+  const needle = query.trim().toLowerCase();
+  const shown = useMemo(
+    () =>
+      needle
+        ? history.filter(
+            (item) =>
+              item.sourceText.toLowerCase().includes(needle) ||
+              (item.translatedText ?? "").toLowerCase().includes(needle),
+          )
+        : history,
+    [history, needle],
+  );
 
   const copy = async (item: HistoryItem) => {
     const ok = await copyText(item.translatedText || item.sourceText);
@@ -1138,25 +1154,34 @@ export function HistorySection({
           </div>
         ) : (
           <div>
-            {history.map((item) => (
-              <div className="history-item" key={item.id}>
-                <div className="history-text">
-                  <div className="history-src">{item.sourceText}</div>
-                  {item.translatedText ? <div className="history-dst">{item.translatedText}</div> : null}
-                </div>
-                <div className="history-meta">
-                  <span className="badge">{formatClock(item.createdAt)}</span>
-                  <div className="history-actions">
-                    <button className="btn btn-sm btn-ghost" onClick={() => copy(item)}>
-                      {t("copy")}
-                    </button>
-                    <button className="btn btn-sm btn-ghost" onClick={() => remove(item.id)}>
-                      ✕
-                    </button>
+            <div className="history-search">
+              <TextInput value={query} onChange={setQuery} placeholder={t("historySearch")} />
+            </div>
+            {shown.length === 0 ? (
+              <div className="empty">
+                <div style={{ fontWeight: 500, color: "var(--text-soft)" }}>{t("historyNoMatch")}</div>
+              </div>
+            ) : (
+              shown.map((item) => (
+                <div className="history-item" key={item.id}>
+                  <div className="history-text">
+                    <div className="history-src">{item.sourceText}</div>
+                    {item.translatedText ? <div className="history-dst">{item.translatedText}</div> : null}
+                  </div>
+                  <div className="history-meta">
+                    <span className="badge">{formatClock(item.createdAt)}</span>
+                    <div className="history-actions">
+                      <button className="btn btn-sm btn-ghost" onClick={() => copy(item)}>
+                        {t("copy")}
+                      </button>
+                      <button className="btn btn-sm btn-ghost" onClick={() => remove(item.id)}>
+                        ✕
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         )}
       </Card>

@@ -350,6 +350,8 @@ const STRINGS = {
   historyLimit: ["最多保存条数", "Maximum entries"],
   historyEmpty: ["还没有记录", "Nothing here yet"],
   historyEmptyHint: ["完成一次截图翻译后，记录会出现在这里。", "Your captures will show up here."],
+  historySearch: ["搜索原文或译文…", "Search source or translation…"],
+  historyNoMatch: ["没有匹配的记录", "No matching entries"],
   historyClear: ["清空历史", "Clear history"],
   historyClearConfirm: ["确定要清空全部历史记录吗？", "Clear the whole history?"],
 
