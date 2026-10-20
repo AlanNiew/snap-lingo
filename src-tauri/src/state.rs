@@ -22,7 +22,7 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// One monitor's frozen pixels, plus the (possibly downscaled) preview the
 /// overlay paints. The overlay sends its drag in **full-resolution frame**
-/// pixels (it scales by `preview.width / innerWidth` on its side), so
+/// pixels (it scales by `frame.width / innerWidth` on its side), so
 /// `CaptureSession::frame_rect` only has to clamp, never rescale.
 pub struct SessionEntry {
     pub frame: MonitorFrame,
@@ -43,7 +43,6 @@ impl CaptureSession {
         self.entries.iter().find(|e| e.frame.id == monitor_id)
     }
 
-    /// Preview-space rect → full-resolution, monitor-local rect.
     /// Keep the selection inside the frozen frame.
     ///
     /// The rectangle arrives in **frame pixels** (physical): the overlay maps

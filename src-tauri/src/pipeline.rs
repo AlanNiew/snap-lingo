@@ -198,7 +198,9 @@ pub async fn begin_capture(app: AppHandle) {
     };
 
     let ids: Vec<u32> = entries.iter().map(|entry| entry.frame.id).collect();
-    let primary = ids.first().copied();
+    // The overlay to give focus: the first entry, which is the primary screen in
+    // multi-monitor mode and the pointer's screen in single-screen mode.
+    let focus_id = ids.first().copied();
     *lock(&state.session) = Some(CaptureSession {
         entries,
         started: Instant::now(),
@@ -263,7 +265,7 @@ pub async fn begin_capture(app: AppHandle) {
                 }
             }
         }
-        if let Some(id) = primary {
+        if let Some(id) = focus_id {
             windows::reveal_overlay(&app, id, true);
         }
     });
@@ -673,6 +675,9 @@ async fn recognize(
 fn provider_labels(cfg: &AppConfig) -> (String, String) {
     match cfg.ocr.provider.as_str() {
         "vision" => ("vision".to_string(), cfg.ocr.active().model),
+        // A one-step picture translation is its own channel: the text came back
+        // from the vendor, the local OCR engines never ran.
+        "picture" => ("image".to_string(), String::new()),
         "local" => ("local".to_string(), host_of(&cfg.ocr.base_url)),
         _ => ("winocr".to_string(), String::new()),
     }
@@ -882,4 +887,40 @@ where
         std::thread::sleep(delay);
         f(app);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+
+    #[test]
+    fn every_engine_gets_a_stable_tag() {
+        let mut cfg = AppConfig::default();
+
+        // The default engine has no model name to show — the tag is enough.
+        assert_eq!(provider_labels(&cfg), ("winocr".to_string(), String::new()));
+
+        // One-step picture translation keeps its own tag, otherwise a retry of a
+        // picture result would relabel itself as Windows OCR.
+        cfg.ocr.provider = "picture".into();
+        assert_eq!(provider_labels(&cfg).0, "image");
+
+        cfg.ocr.provider = "local".into();
+        cfg.ocr.base_url = "http://127.0.0.1:1224".into();
+        assert_eq!(provider_labels(&cfg).0, "local");
+
+        cfg.ocr.provider = "vision".into();
+        cfg.ocr.model = "stale-flat-model".into();
+        cfg.ocr.profiles.insert(
+            "acme".into(),
+            crate::config::OcrProfile {
+                model: "acme-vision".into(),
+                ..Default::default()
+            },
+        );
+        cfg.ocr.vendor = "acme".into();
+        // The badge shows the active vendor's model, never the migrated flat field.
+        assert_eq!(provider_labels(&cfg), ("vision".to_string(), "acme-vision".into()));
+    }
 }

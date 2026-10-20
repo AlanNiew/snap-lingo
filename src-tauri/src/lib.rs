@@ -298,6 +298,12 @@ pub fn run() {
                     return;
                 }
                 let state = window.state::<AppState>();
+                // With 自适应内容 on, the window is resized by
+                // `fit_result_window` for us — that height follows the text of
+                // one result, so it must not become the remembered user size.
+                if state.config().ui.auto_fit {
+                    return;
+                }
                 *crate::state::lock(&state.result_size) = Some((size.width, size.height));
             }
             _ => {}
