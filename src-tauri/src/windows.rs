@@ -109,8 +109,21 @@ fn place_result(app: &AppHandle, window: &WebviewWindow) {
     // Physical pixels throughout: `work_area` is physical, so mixing in logical
     // sizes here would land the window off-screen on scaled displays.
     let area = monitor.work_area();
-    let width = (area.size.width / 2).clamp(420, area.size.width.max(1));
-    let height = (area.size.height / 2).clamp(260, area.size.height.max(1));
+    // Keep whatever size the user last dragged the window to; only the first
+    // popup after launch falls back to "about half the screen".
+    let remembered = app
+        .try_state::<crate::state::AppState>()
+        .and_then(|state| *crate::state::lock(&state.result_size));
+    let (width, height) = match remembered {
+        Some((w, h)) => (
+            w.clamp(420, area.size.width.max(420)),
+            h.clamp(260, area.size.height.max(260)),
+        ),
+        None => (
+            (area.size.width / 2).clamp(420, area.size.width.max(420)),
+            (area.size.height / 2).clamp(260, area.size.height.max(260)),
+        ),
+    };
     let x = area.position.x + (area.size.width as i32 - width as i32) / 2;
     let y = area.position.y + (area.size.height as i32 - height as i32) / 2;
     let _ = window.set_size(PhysicalSize::new(width, height));

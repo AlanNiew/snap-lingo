@@ -290,6 +290,16 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+            WindowEvent::Resized(size) => {
+                // Remember how big the user made the result window. Windows keeps
+                // the geometry of a hidden window, so this survives the hide/show
+                // of every capture and the next popup opens at the same size.
+                if window.label() != windows::RESULT || !window.is_visible().unwrap_or(false) {
+                    return;
+                }
+                let state = window.state::<AppState>();
+                *crate::state::lock(&state.result_size) = Some((size.width, size.height));
+            }
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![

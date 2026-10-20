@@ -84,6 +84,9 @@ pub struct AppState {
     /// The notice currently on screen (`kind`, `message`), so the auto-hide
     /// watchdog can tell whether it is still the same one.
     pub last_toast: Mutex<Option<(String, String)>>,
+    /// Physical size the user last dragged the result window to. The next popup
+    /// reuses it instead of snapping back to half the screen.
+    pub result_size: Mutex<Option<(u32, u32)>>,
     /// True from the moment a capture starts until the overlays are gone.
     pub busy: AtomicBool,
     /// Set when the user picks 退出, so window-closing stops being vetoed.
@@ -108,6 +111,7 @@ impl AppState {
             history: Mutex::new(load_history(&history_path)),
             history_path,
             last_toast: Mutex::new(None),
+            result_size: Mutex::new(None),
             busy: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
         })
