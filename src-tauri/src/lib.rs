@@ -218,9 +218,20 @@ pub fn run() {
                     // Warm the capture path too: creating the first graphics
                     // session costs a few hundred milliseconds, and paying it
                     // here means the first hotkey press feels like every other.
-                    std::thread::spawn(|| {
+                    let cursor = app
+                        .cursor_position()
+                        .ok()
+                        .map(|point| (point.x.round() as i32, point.y.round() as i32));
+                    // Warm exactly the mode the user configured, so the first real
+                    // capture never pays a path that the warm-up skipped.
+                    let all_monitors = app
+                        .state::<crate::state::AppState>()
+                        .config()
+                        .capture
+                        .all_monitors;
+                    std::thread::spawn(move || {
                         let started = std::time::Instant::now();
-                        match crate::capture::capture(false) {
+                        match crate::capture::capture(all_monitors, cursor) {
                             Ok(frames) => log::info!(
                                 "抓屏预热完成：{} 个显示器，用时 {} ms",
                                 frames.len(),

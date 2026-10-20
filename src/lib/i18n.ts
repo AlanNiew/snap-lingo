@@ -41,7 +41,7 @@ const STRINGS = {
     "每个显示器都会出现一个框选层，可在任意一块屏幕上选取。",
     "Every monitor gets its own selection layer.",
   ],
-  capturePrimaryOnly: ["仅主显示器", "Primary monitor only"],
+  capturePrimaryOnly: ["仅鼠标所在显示器", "Monitor under the cursor"],
   trayTitle: ["托盘菜单", "Tray menu"],
   trayHint: [
     "右键托盘图标可以截图、打开设置或退出程序。关闭窗口不会退出程序。",

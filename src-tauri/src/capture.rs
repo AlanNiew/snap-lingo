@@ -31,24 +31,35 @@ impl MonitorFrame {
     }
 }
 
-/// Grab a frame from every monitor (or just the primary when `all_monitors` is
-/// off). The primary monitor always comes first.
-pub fn capture(all_monitors: bool) -> Result<Vec<MonitorFrame>> {
-    let monitors = Monitor::all().context("无法枚举显示器（xcap）")?;
+/// Grab a frame from every monitor, or just one when `all_monitors` is off —
+/// and "the one" means the screen the pointer is on, because a capture is about
+/// whatever the user is currently looking at. The primary monitor sorts first
+/// so callers can treat the first entry as the main screen; in single-screen
+/// mode the only entry is the screen under the cursor, primary or not.
+pub fn capture(all_monitors: bool, cursor: Option<(i32, i32)>) -> Result<Vec<MonitorFrame>> {
+    let mut monitors = Monitor::all().context("无法枚举显示器（xcap）")?;
     if monitors.is_empty() {
         bail!("没有检测到可用显示器。");
     }
 
-    // Decide which monitors to freeze up front: all of them, or just the one the
-    // OS flags as primary (falling back to the first when nothing is flagged).
-    let targets: Vec<&Monitor> = if all_monitors {
-        monitors.iter().collect()
+    // Decide which monitors to freeze up front.
+    let targets: Vec<Monitor> = if all_monitors {
+        monitors
     } else {
-        let primary = monitors
-            .iter()
-            .find(|m| m.is_primary().unwrap_or(false))
-            .unwrap_or(&monitors[0]);
-        vec![primary]
+        let under_cursor = cursor
+            .and_then(|(x, y)| Monitor::from_point(x, y).ok())
+            .filter(|m| m.width().unwrap_or(0) > 0 && m.height().unwrap_or(0) > 0);
+        match under_cursor {
+            Some(monitor) => vec![monitor],
+            None => {
+                // The OS could not resolve the point: fall back to the primary.
+                let index = monitors
+                    .iter()
+                    .position(|m| m.is_primary().unwrap_or(false))
+                    .unwrap_or(0);
+                vec![monitors.swap_remove(index)]
+            }
+        }
     };
 
     let mut described: Vec<(bool, MonitorFrame)> = Vec::new();

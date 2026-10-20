@@ -135,11 +135,17 @@ pub async fn begin_capture(app: AppHandle) {
 
     let all_monitors = cfg.capture.all_monitors;
     let preview_edge = windows::PREVIEW_LONG_EDGE;
+    // Physical pixels, resolved before the blocking capture starts. Single-screen
+    // mode follows the pointer, so the layer appears on the screen being used.
+    let cursor = app
+        .cursor_position()
+        .ok()
+        .map(|point| (point.x.round() as i32, point.y.round() as i32));
     let prepared = match tokio::time::timeout(
         CAPTURE_TIMEOUT,
         tauri::async_runtime::spawn_blocking(move || -> Result<(Vec<SessionEntry>, u128, u128)> {
             let t_capture = Instant::now();
-            let frames = capture::capture(all_monitors)?;
+            let frames = capture::capture(all_monitors, cursor)?;
             let capture_ms = t_capture.elapsed().as_millis();
 
             // Encode each monitor's backdrop; with several screens this runs on
