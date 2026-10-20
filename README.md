@@ -150,7 +150,7 @@ npm run tauri build
 | --- | --- | --- | --- |
 | DeepL | API Key、账号类型 | deepl.com（账号 → API 密钥） | Free 密钥以 `:fx` 结尾 |
 | 微软翻译（Azure） | API Key、区域 | portal.azure.com（创建「文本翻译」资源） | 区域例如 `eastasia`；每月有免费额度 |
-| 谷歌翻译 | API Key | console.cloud.google.com（API 凭证） | Google Cloud Translation v2，密钥作为 URL 参数发送，建议在控制台限制该密钥 |
+| 谷歌翻译 | API Key | console.cloud.google.com（API 凭证） | Google Cloud Translation v2；密钥走 `X-Goog-Api-Key` 请求头，不放进 URL，建议在控制台限制该密钥 |
 | 有道智云 | 应用 ID、应用密钥 | ai.youdao.com（控制台 → 应用总览） | 文本翻译 v3，签名走 `sha256`；**支持一步图片翻译** |
 | 有道大模型翻译 | 应用 ID、应用密钥 | ai.youdao.com（控制台 → 应用总览 → 大模型翻译） | 「子曰」大模型通道，服务版本可选 **Pro / Lite**；接口是流式（SSE），程序自动取最终译文；需在控制台开通并充值 |
 | 百度翻译 | AppID、密钥 | fanyi-api.baidu.com | 签名走 `md5`；**支持一步图片翻译**，服务版本可选通用文本 / 大模型；大模型版也可改用 **API Key（Bearer）** 鉴权，无需算签名 |

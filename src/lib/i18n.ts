@@ -188,8 +188,8 @@ const STRINGS = {
   ],
   translateGoogle: ["谷歌翻译", "Google Translate"],
   translateGoogleDesc: [
-    "Google Cloud Translation v2，语言覆盖最广。密钥随请求以 URL 参数发送，建议在 Google Cloud 中限制该密钥。",
-    "Google Cloud Translation v2, widest language coverage. The key travels as a URL parameter, so restrict it in Google Cloud.",
+    "Google Cloud Translation v2，语言覆盖最广。密钥走请求头（X-Goog-Api-Key），不放进 URL，建议在 Google Cloud 中限制该密钥。",
+    "Google Cloud Translation v2, widest language coverage. The key travels in the X-Goog-Api-Key header, never in the URL, so restrict it in Google Cloud.",
   ],
   translateYoudao: ["有道智云", "Youdao"],
   translateYoudaoDesc: [

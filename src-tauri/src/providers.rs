@@ -19,7 +19,11 @@ use std::time::{Duration, Instant};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
-const MAX_ATTEMPTS: u32 = 3;
+/// One initial try plus three retries — the number the docs promise. The
+/// pipeline's own deadlines (120 s for translation, 150 s for the whole job)
+/// still bound the call, so a slow engine only retries as far as the user is
+/// willing to wait.
+const MAX_ATTEMPTS: u32 = 4;
 /// Translate in slices of roughly this many characters.
 const CHUNK_CHARS: usize = 2400;
 
@@ -685,22 +689,35 @@ impl Providers {
         Ok(out.join("\n"))
     }
 
-    /// Google Cloud Translation v2, API key in the query string.
+    /// Google Cloud Translation v2. The key travels in the `X-Goog-Api-Key`
+    /// header, never in the query string: reqwest prints the whole URL on a
+    /// transport error, so a `?key=…` URL would leak the secret into the log.
     async fn google(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
         require_key(&cfg.api_key, "谷歌翻译")?;
-        let base = if cfg.base_url.trim().is_empty() {
-            "https://translation.googleapis.com/language/translate/v2".to_string()
-        } else {
-            cfg.base_url.trim().trim_end_matches('/').to_string()
-        };
-        let url = format!("{base}?key={}", cfg.api_key.trim());
+        let url = google_url(cfg);
+        let key = cfg.api_key.trim().to_string();
+        // A header value only accepts visible ASCII. A stray space or a
+        // full-width character copied off a web page would surface as a builder
+        // error, which reads like a network failure and gets retried four
+        // times. Name the real problem instead.
+        if !key.is_ascii() || key.chars().any(char::is_whitespace) {
+            bail!("谷歌翻译的 API Key 含空格或非 ASCII 字符，请检查是否复制完整。");
+        }
         let target = google_target(&cfg.target_lang);
 
         let mut out = Vec::new();
         for chunk in chunk_text(text, CHUNK_CHARS) {
             let body = json!({ "q": [chunk], "target": target, "format": "text" });
             let resp = self
-                .send_with_retry(|| self.client.post(&url).json(&body), "谷歌翻译")
+                .send_with_retry(
+                    || {
+                        self.client
+                            .post(&url)
+                            .header("X-Goog-Api-Key", key.as_str())
+                            .json(&body)
+                    },
+                    "谷歌翻译",
+                )
                 .await?;
             let parsed: Value = serde_json::from_str(&resp).context("谷歌翻译返回的不是 JSON")?;
             let translated = parsed
@@ -1269,8 +1286,9 @@ impl Providers {
             let outcome = match build().send().await {
                 Err(err) => {
                     log::warn!(
-                        "{what} 第 {attempt}/{MAX_ATTEMPTS} 次请求失败（{} ms）：{err}",
-                        started.elapsed().as_millis()
+                        "{what} 第 {attempt}/{MAX_ATTEMPTS} 次请求失败（{} ms）：{}",
+                        started.elapsed().as_millis(),
+                        redact_error(&err)
                     );
                     Err(anyhow!(classify_transport(&err)))
                 }
@@ -1510,7 +1528,8 @@ fn is_secret_query(key: &str) -> bool {
     )
 }
 
-/// URL 里的敏感查询参数打码（谷歌翻译把密钥放在 URL 上）。
+/// URL 里的敏感查询参数打码。请求地址可能带着 `?key=…`，任何要落盘的地方都
+/// 必须先过这一层：日志对用户（以及任何分享日志的人）都是可读的。
 fn scrub_url(url: &str) -> String {
     let Some((base, query)) = url.split_once('?') else {
         return url.to_string();
@@ -1518,11 +1537,26 @@ fn scrub_url(url: &str) -> String {
     let scrubbed: Vec<String> = query
         .split('&')
         .map(|pair| match pair.split_once('=') {
-            Some((k, _)) if is_secret_query(k) => format!("{k}=…"),
+            Some((k, _)) if is_secret_query(k) => format!("{k}=***"),
             _ => pair.to_string(),
         })
         .collect();
     format!("{base}?{}", scrubbed.join("&"))
+}
+
+/// Scrub one known URL out of any text it was embedded in. Split out from
+/// `redact_error` so the rule itself is testable without a live transport error.
+fn redact_url_in(text: &str, url: &str) -> String {
+    text.replace(url, &scrub_url(url))
+}
+
+/// The Display form of a reqwest error embeds the request URL — which may carry
+/// a credential in the query string. Scrub it before it reaches the log.
+fn redact_error(err: &reqwest::Error) -> String {
+    match err.url() {
+        Some(url) => redact_url_in(&err.to_string(), url.as_str()),
+        None => err.to_string(),
+    }
 }
 
 /// 每发出一个请求就留一行：走了哪个渠道、哪个地址、带了什么参数。
@@ -1558,7 +1592,7 @@ fn classify_transport(err: &reqwest::Error) -> String {
     } else if err.is_connect() {
         "RETRY: 无法连接到服务端点，请检查网络或 Base URL。".to_string()
     } else {
-        format!("RETRY: 网络请求失败：{err}")
+        format!("RETRY: 网络请求失败：{}", redact_error(err))
     }
 }
 
@@ -2017,6 +2051,18 @@ pub fn microsoft_target(tag: &str) -> String {
 
 pub fn google_target(tag: &str) -> String {
     base_tag(tag)
+}
+
+/// Google's translation endpoint, resolved from the configured base URL.
+///
+/// Kept beside `google_target` so the "no credential in the URL" rule has one
+/// place to look: the key travels in the `X-Goog-Api-Key` header instead.
+pub fn google_url(cfg: &TranslateConfig) -> String {
+    if cfg.base_url.trim().is_empty() {
+        "https://translation.googleapis.com/language/translate/v2".to_string()
+    } else {
+        cfg.base_url.trim().trim_end_matches('/').to_string()
+    }
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -2616,5 +2662,44 @@ mod tests {
         assert_eq!(detect_source("한글"), "ko");
         assert!(is_auto_target("AUTO"));
         assert!(!is_auto_target("en"));
+    }
+
+    #[test]
+    fn log_lines_never_carry_a_credential() {
+        // Google used to pass its key as `?key=…`; whatever an engine does now,
+        // anything headed for the log goes through `scrub_url` first.
+        assert_eq!(
+            scrub_url("https://translate.googleapis.com/v2?key=AIzaSySECRET&alt=json"),
+            "https://translate.googleapis.com/v2?key=***&alt=json"
+        );
+        assert_eq!(
+            scrub_url("https://api.deepl.com/v2/translate"),
+            "https://api.deepl.com/v2/translate"
+        );
+        // `sign` and `token` are the query credentials the guide names; an
+        // ordinary parameter keeps its value so a log line stays useful.
+        assert_eq!(
+            scrub_url("https://x.test/?sign=abc&token=t&text=hi"),
+            "https://x.test/?sign=***&token=***&text=hi"
+        );
+        // A display string that embeds the URL is scrubbed where it is embedded.
+        let url = "https://api.example.test/v1?api_key=sk-live";
+        let message = format!("error sending request for {url}: connection refused");
+        let scrubbed = redact_url_in(&message, url);
+        assert!(!scrubbed.contains("sk-live"));
+        assert!(scrubbed.contains("api_key=***"));
+    }
+
+    #[test]
+    fn google_never_puts_the_key_in_the_url() {
+        let mut cfg = TranslateConfig::default();
+        assert_eq!(
+            google_url(&cfg),
+            "https://translation.googleapis.com/language/translate/v2"
+        );
+        // A custom endpoint is used verbatim, minus a trailing slash.
+        cfg.base_url = "https://proxy.example.test/translate/".into();
+        assert_eq!(google_url(&cfg), "https://proxy.example.test/translate");
+        assert!(!google_url(&cfg).contains("key="));
     }
 }
