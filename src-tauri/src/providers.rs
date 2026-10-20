@@ -2227,9 +2227,9 @@ fn baidu_error(code: &str) -> &'static str {
     match code {
         "52001" => "请求超时，请重试",
         "52002" => "系统错误，请重试",
-        "52003" => "未授权用户：该 APP ID 没有开通「图片翻译」服务。图片翻译需要在百度控制台单独申请；也可以关闭这个渠道的「一步翻译图片」，改用本机识别 + 文本翻译",
+        "52003" => "未授权用户：该 APP ID 没有开通这个服务（大模型翻译、图片翻译都需要在百度控制台单独申请）。开通后重试；若只想用图片翻译，也可以改回本机识别",
         "54000" => "必填参数为空",
-        "54001" => "签名错误：请核对密钥",
+        "54001" => "签名或 API Key 错误：请核对凭据（签名方式用应用密钥，API Key 方式用控制台创建的 Key）",
         "54003" => "访问频率受限",
         "54004" => "账户余额不足",
         "54005" => "长文本请求过于频繁",
@@ -2553,6 +2553,20 @@ mod tests {
             baidu_error_code(&serde_json::json!({ "error_code": 54004 })),
             Some("54004".to_string())
         );
+    }
+
+    #[test]
+    fn baidu_llm_bearer_rejections_are_readable() {
+        // Real reply shape from `POST /ait/api/aiTextTranslate` with a Bearer
+        // header: HTTP 200, a Baidu error code and `data: null`.
+        let body = serde_json::json!({
+            "error_code": "54001",
+            "error_msg": "invalid token",
+            "data": null
+        });
+        assert_eq!(baidu_error_code(&body), Some("54001".to_string()));
+        assert!(trans_segments(&body).is_none());
+        assert_eq!(baidu_error("54001"), "签名或 API Key 错误：请核对凭据（签名方式用应用密钥，API Key 方式用控制台创建的 Key）");
     }
 
     #[test]
