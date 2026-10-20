@@ -1,9 +1,11 @@
 /**
  * Tiny two-language dictionary.
  *
- * `[简体中文, English]`, with `{name}` placeholders. Everything user-visible
- * lives here so the language switch in 设置 → 外观 is honest: no half-English
- * screens, no untranslated leftovers.
+ * `[简体中文, English]`, with `{name}` placeholders. Everything the frontend
+ * renders lives here, so switching 设置 → 外观 never leaves a half-translated
+ * screen. One documented gap: messages that originate in Rust (pipeline errors,
+ * toasts, the log viewer) are Chinese only — the backend writes user-facing
+ * prose in one language, and the UI shows it verbatim in both modes.
  */
 
 export type Lang = "zh" | "en";

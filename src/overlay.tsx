@@ -218,7 +218,12 @@ export function Overlay() {
     });
   };
 
-  const tooSmall = box !== null && (box.width < 4 || box.height < 4);
+  // Same rule as the commit check in onMouseUp, but measured in physical pixels
+  // so the hint agrees with what will actually happen when the mouse is released.
+  const previewScale = frame ? frame.width / Math.max(1, window.innerWidth) : 1;
+  const tooSmall =
+    box !== null &&
+    (box.width * previewScale < MIN_PHYSICAL || box.height * previewScale < MIN_PHYSICAL);
 
   return (
     <div

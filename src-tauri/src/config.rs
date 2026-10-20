@@ -483,6 +483,7 @@ impl AppConfig {
             self.ui.result_view = "both".into();
         }
         // Palettes the UI can paint. Anything else falls back to `system`.
+        // Keep in sync with `THEMES` in `src/lib/theme.ts`.
         if !matches!(
             self.ui.theme.as_str(),
             "system" | "light" | "dark" | "paper" | "midnight" | "forest" | "contrast"

@@ -21,8 +21,9 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// One monitor's frozen pixels, plus the (possibly downscaled) preview the
-/// overlay paints. The user's drag is expressed in **preview** pixel space, so
-/// `SessionEntry::to_frame_rect` maps it back onto the full-resolution frame.
+/// overlay paints. The overlay sends its drag in **full-resolution frame**
+/// pixels (it scales by `preview.width / innerWidth` on its side), so
+/// `CaptureSession::frame_rect` only has to clamp, never rescale.
 pub struct SessionEntry {
     pub frame: MonitorFrame,
     /// Pre-encoded backdrop handed to the overlay. The decoded `RgbaImage` is

@@ -363,11 +363,11 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
     patch((cfg) => {
       const key = preset.id;
       const existing = cfg.ocr.profiles?.[key] ?? EMPTY_OCR_PROFILE;
-      const legacy = cfg.ocr.profiles?.[cfg.ocr.vendor || "custom"] ?? EMPTY_OCR_PROFILE;
+      const inUse = cfg.ocr.profiles?.[cfg.ocr.vendor || "custom"] ?? EMPTY_OCR_PROFILE;
       // Same address as before? Then the old key belongs to this vendor too.
       const sameAddress =
-        legacy.apiKey.trim().length > 0 &&
-        legacy.baseUrl.trim().replace(/\/+$/, "") === preset.baseUrl.trim().replace(/\/+$/, "");
+        inUse.apiKey.trim().length > 0 &&
+        inUse.baseUrl.trim().replace(/\/+$/, "") === preset.baseUrl.trim().replace(/\/+$/, "");
       return {
         ...cfg,
         ocr: {
@@ -378,7 +378,7 @@ export function OcrSection({ config, patch, notify, languages }: Base & { langua
             [key]: {
               baseUrl: preset.baseUrl,
               model: preset.visionModel,
-              apiKey: existing.apiKey || (sameAddress ? legacy.apiKey : ""),
+              apiKey: existing.apiKey || (sameAddress ? inUse.apiKey : ""),
             },
           },
         },
@@ -634,10 +634,12 @@ export function TranslateSection({ config, patch, notify }: Base) {
     patch((cfg) => {
       const key = preset.id;
       const existing = cfg.translate.profiles?.[key] ?? EMPTY_PROFILE;
-      const legacy = cfg.translate.profiles?.[cfg.translate.provider] ?? EMPTY_PROFILE;
+      // When the vendor being picked is the one whose address is already in use,
+      // carry its key over instead of making the user paste it again.
+      const inUse = cfg.translate.profiles?.[cfg.translate.provider] ?? EMPTY_PROFILE;
       const sameAddress =
-        legacy.apiKey.trim().length > 0 &&
-        legacy.baseUrl.trim().replace(/\/+$/, "") === preset.baseUrl.trim().replace(/\/+$/, "");
+        inUse.apiKey.trim().length > 0 &&
+        inUse.baseUrl.trim().replace(/\/+$/, "") === preset.baseUrl.trim().replace(/\/+$/, "");
       return {
         ...cfg,
         translate: {
@@ -649,7 +651,7 @@ export function TranslateSection({ config, patch, notify }: Base) {
               ...existing,
               baseUrl: preset.baseUrl,
               model: preset.textModel,
-              apiKey: existing.apiKey || (sameAddress ? legacy.apiKey : ""),
+              apiKey: existing.apiKey || (sameAddress ? inUse.apiKey : ""),
             },
           },
         },

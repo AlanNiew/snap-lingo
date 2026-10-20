@@ -85,7 +85,6 @@ export function acceleratorFromEvent(event: KeyboardEvent): string | null {
   if (event.altKey) parts.push("Alt");
   if (event.shiftKey) parts.push("Shift");
   if (event.metaKey) parts.push("Super");
-  void event.key;
 
   const isFunction = FUNCTION_KEY.test(event.code);
   if (parts.length === 0 && !isFunction) return null;

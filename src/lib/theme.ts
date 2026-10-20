@@ -20,7 +20,15 @@ export type ThemeId =
   | "forest"
   | "contrast";
 
-/** Order shown in the picker. */
+/**
+ * Order shown in the picker.
+ *
+ * These names are the whole contract with the backend: `sanitize()` in
+ * `src-tauri/src/config.rs` (the `matches!` next to the "Palettes the UI can
+ * paint" comment) falls back to `system` for anything not listed here, so a new
+ * palette needs an entry here, a `styles.css` block and a name in that
+ * `matches!`.
+ */
 export const THEMES: ThemeId[] = [
   "system",
   "light",

@@ -346,7 +346,6 @@ pub fn hide_overlays(app: &AppHandle) {
     }
 }
 
-/// Hide our own windows so they cannot end up inside the screenshot.
 /// Hide the windows that must never appear inside a shot. Returns whether
 /// anything was actually visible — the caller then knows if it has to wait for
 /// the compositor before reading the screen.
