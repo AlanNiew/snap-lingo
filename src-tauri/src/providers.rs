@@ -42,6 +42,36 @@ impl ImagePayload {
     }
 }
 
+/* -------------------------------------------------- credential scoping */
+
+/// Fold the active vision vendor's profile into the flat credential fields the
+/// engine reads, so a request can never pick up another vendor's key or model.
+fn scoped_ocr(cfg: &OcrConfig) -> OcrConfig {
+    let picked = cfg.active();
+    let mut scoped = cfg.clone();
+    scoped.base_url = picked.base_url;
+    scoped.api_key = picked.api_key;
+    scoped.model = picked.model;
+    scoped
+}
+
+/// Same idea for the translation engines: the selected engine's own address,
+/// keys, region, model and tier replace whatever the flat fields happen to hold.
+fn scoped_translate(cfg: &TranslateConfig) -> TranslateConfig {
+    let profile = cfg.active();
+    let tier = profile.tier(&cfg.provider);
+    let mut scoped = cfg.clone();
+    scoped.base_url = profile.base_url;
+    scoped.api_key = profile.api_key;
+    scoped.api_secret = profile.api_secret;
+    scoped.region = profile.region;
+    scoped.model = profile.model;
+    scoped.model_tier = tier;
+    scoped.auth = profile.auth;
+    scoped.bearer = profile.bearer;
+    scoped
+}
+
 #[derive(Clone)]
 pub struct Providers {
     client: reqwest::Client,
@@ -69,14 +99,9 @@ impl Providers {
         target_lang: &str,
         one_shot: bool,
     ) -> Result<(String, Option<String>)> {
-        // Vision credentials live per vendor. Fold the active vendor's endpoint,
-        // key and model into a local view so the request always uses its own set
-        // (and never another vendor's leftovers).
-        let picked = cfg.active();
-        let mut scoped = cfg.clone();
-        scoped.base_url = picked.base_url;
-        scoped.api_key = picked.api_key;
-        scoped.model = picked.model;
+        // Vision credentials live per vendor; fold the active one into the flat
+        // fields so the request always uses its own set.
+        let scoped = scoped_ocr(cfg);
         let cfg = &scoped;
 
         require_key(&cfg.api_key, "OCR / 视觉模型")?;
@@ -143,22 +168,9 @@ impl Providers {
     /* ------------------------------------------------------- translate */
 
     pub async fn translate(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
-        // The engines below read the flat credential fields. Fold the selected
-        // engine's own profile into them so no engine can ever pick up another
-        // engine's key, region or endpoint.
-        let profile = cfg.active();
-        let tier = profile.tier(&cfg.provider);
-        let mut scoped = cfg.clone();
-        scoped.base_url = profile.base_url;
-        scoped.api_key = profile.api_key;
-        scoped.api_secret = profile.api_secret;
-        scoped.region = profile.region;
-        scoped.model = profile.model;
-        scoped.model_tier = tier;
-        let auth = profile.auth.clone();
-        let bearer = profile.bearer.clone();
-        scoped.auth = auth;
-        scoped.bearer = bearer;
+        // The engines below read the flat credential fields; scope them to the
+        // selected engine first.
+        let scoped = scoped_translate(cfg);
         let cfg = &scoped;
         if let Some(url) = text_endpoint(&cfg.provider, cfg) {
             let params: Vec<(&str, String)> = vec![
@@ -199,19 +211,7 @@ impl Providers {
         cfg: &TranslateConfig,
         image: &ImagePayload,
     ) -> Result<(String, String)> {
-        let profile = cfg.active();
-        let tier = profile.tier(&cfg.provider);
-        let mut scoped = cfg.clone();
-        scoped.base_url = profile.base_url;
-        scoped.api_key = profile.api_key;
-        scoped.api_secret = profile.api_secret;
-        scoped.region = profile.region;
-        scoped.model = profile.model;
-        scoped.model_tier = tier;
-        let auth = profile.auth.clone();
-        let bearer = profile.bearer.clone();
-        scoped.auth = auth;
-        scoped.bearer = bearer;
+        let scoped = scoped_translate(cfg);
         let cfg = &scoped;
         if let Some(url) = image_endpoint(&cfg.provider, cfg) {
             let params: Vec<(&str, String)> = vec![
@@ -2701,5 +2701,22 @@ mod tests {
         cfg.base_url = "https://proxy.example.test/translate/".into();
         assert_eq!(google_url(&cfg), "https://proxy.example.test/translate");
         assert!(!google_url(&cfg).contains("key="));
+    }
+
+    #[test]
+    fn scoped_credentials_follow_the_active_vendor() {
+        let mut cfg = TranslateConfig::default();
+        cfg.vendor = "deepseek".into();
+        cfg.api_key = "stale-flat-key".into();
+        cfg.profiles.insert(
+            "deepseek".into(),
+            crate::config::TranslateProfile {
+                api_key: "vendor-key".into(),
+                ..Default::default()
+            },
+        );
+        // The flat fields are replaced by the active vendor's own set, never
+        // merged with whatever happened to be lying around.
+        assert_eq!(scoped_translate(&cfg).api_key, "vendor-key");
     }
 }
