@@ -664,6 +664,25 @@ export function TranslateSection({ config, patch, notify }: Base) {
       : provider === "baidu"
         ? t("secretBaidu")
         : t("secretTencent");
+  // Each cloud engine calls its first credential something else.
+  const credentialLabel =
+    provider === "baidu"
+      ? t("credAppId")
+      : provider === "youdao"
+        ? t("credYoudaoId")
+        : provider === "tencent"
+          ? t("credTencentId")
+          : t("endpointKey");
+  const credentialHint =
+    provider === "baidu"
+      ? t("credAppIdHint")
+      : provider === "youdao"
+        ? t("credYoudaoIdHint")
+        : provider === "tencent"
+          ? t("credTencentIdHint")
+          : provider === "deepl"
+            ? t("deeplKeyHint")
+            : t("endpointKeyHint");
   // Baidu's LLM endpoint authenticates either by signature or by a Bearer API
   // Key, so only the credential that is actually used is shown.
   const baiduLlm = provider === "baidu" && (profile.modelTier || "standard") === "llm";
@@ -751,13 +770,30 @@ export function TranslateSection({ config, patch, notify }: Base) {
       {meta && provider !== "openai" && provider !== "none" ? (
         <Card
           title={t(meta.titleKey)}
-          note={has("region") ? t("regionHint") : has("apiSecret") ? t("secretHint") : undefined}
+          note={
+            baiduLlm && keyAuth
+              ? t("baiduKeyNote")
+              : has("region")
+                ? t("regionHint")
+                : has("apiSecret")
+                  ? t("secretHint")
+                  : undefined
+          }
         >
           <div className="stack">
-            <Field
-              label={t("endpointKey")}
-              hint={provider === "deepl" ? t("deeplKeyHint") : t("endpointKeyHint")}
-            >
+            {meta.tiers ? (
+              <Field label={t("tierTitle")} hint={t("tierHint")}>
+                <Select
+                  value={profile.modelTier || meta.tiers[0].value}
+                  onChange={(value) => setProfile({ modelTier: value }, true)}
+                  options={meta.tiers.map((tier) => ({
+                    value: tier.value,
+                    label: t(tier.labelKey),
+                  }))}
+                />
+              </Field>
+            ) : null}
+            <Field label={credentialLabel} hint={credentialHint}>
               <SecretInput
                 value={profile.apiKey}
                 onChange={(value) => setProfile({ apiKey: value })}
@@ -828,18 +864,6 @@ export function TranslateSection({ config, patch, notify }: Base) {
               <div className="note" style={{ marginBottom: 12 }}>
                 {t("translatePictureNote")}
               </div>
-            ) : null}
-            {meta.tiers ? (
-              <Field label={t("tierTitle")} hint={t("tierHint")}>
-                <Select
-                  value={profile.modelTier || meta.tiers[0].value}
-                  onChange={(value) => setProfile({ modelTier: value }, true)}
-                  options={meta.tiers.map((tier) => ({
-                    value: tier.value,
-                    label: t(tier.labelKey),
-                  }))}
-                />
-              </Field>
             ) : null}
             <TranslateTest config={config} />
             <EndpointHint config={config} kind="translate" />

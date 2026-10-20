@@ -109,6 +109,25 @@ const STRINGS = {
     "仅保存在本机的配置文件中（明文）。留空表示不需要鉴权。",
     "Stored in plain text in this machine's config file. Leave empty when no auth is needed.",
   ],
+  credAppId: ["APP ID", "APP ID"],
+  credAppIdHint: [
+    "百度翻译控制台的 APP ID（应用 ID）。用「API Key」鉴权时只需它和下面的 Key，不需要应用密钥。",
+    "The APP ID from the Baidu console. With API Key auth it is all you need besides the key below.",
+  ],
+  credYoudaoId: ["应用 ID", "App ID"],
+  credYoudaoIdHint: [
+    "有道智云的「应用 ID」，与「应用密钥」配对使用。",
+    "The App ID from Youdao Zhiyun; it is paired with the app secret.",
+  ],
+  credTencentId: ["SecretId", "SecretId"],
+  credTencentIdHint: [
+    "腾讯云访问管理（CAM）里的 SecretId，与 SecretKey 配对使用。",
+    "The SecretId from Tencent Cloud CAM, paired with the SecretKey.",
+  ],
+  baiduKeyNote: [
+    "API Key 方式不需要签名：填上百度控制台创建的 API Key 即可，应用密钥可以留空。",
+    "API Key auth needs no signature: paste the key created in the Baidu console and leave the app secret empty.",
+  ],
   endpointModel: ["模型", "Model"],
   endpointModelHint: ["可手动填写，也可以先拉取列表再选择。", "Type it, or fetch the list and pick."],
   fetchModels: ["拉取模型列表", "Fetch models"],

@@ -477,6 +477,10 @@ impl Providers {
     ) -> Result<(String, String)> {
         require_key(&cfg.api_key, "百度翻译")?;
         if cfg.api_secret.trim().is_empty() {
+            // The picture endpoint only signs; a Bearer key cannot be used there.
+            if cfg.auth.trim() == "key" {
+                bail!("百度图片翻译只支持签名鉴权：请把「鉴权方式」改成「签名」并填写应用密钥（API Key 鉴权只适用于大模型文本翻译）。");
+            }
             bail!("百度翻译需要两项凭据：APP ID 与密钥。");
         }
         let endpoint = if cfg.base_url.trim().is_empty() {
@@ -907,13 +911,15 @@ impl Providers {
     /// Baidu Translate open API. md5 signature over a form body.
     async fn baidu(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
         require_key(&cfg.api_key, "百度翻译")?;
-        if cfg.api_secret.trim().is_empty() {
-            bail!("百度翻译需要两项凭据：APP ID 与密钥。");
-        }
-        // 「大模型翻译」 is a separate service on its own endpoint; it shares the
-        // app id + md5 signature contract, so only the URL and the body change.
+        // 「大模型翻译」 is a separate service on its own endpoint, and it can also
+        // authenticate with a Bearer API Key — so it must be dispatched *before*
+        // the signature-only requirement below, otherwise a Bearer setup is
+        // rejected for a missing app secret it does not need.
         if cfg.model_tier.trim() == "llm" {
             return self.baidu_llm(cfg, text).await;
+        }
+        if cfg.api_secret.trim().is_empty() {
+            bail!("百度翻译需要两项凭据：APP ID 与密钥。");
         }
         let endpoint = if cfg.base_url.trim().is_empty() {
             "https://fanyi-api.baidu.com/api/trans/vip/translate".to_string()
