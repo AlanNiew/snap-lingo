@@ -657,24 +657,18 @@ async fn recognize(
     Ok((text, None))
 }
 
+/// The engine tag plus the model name that go into a `ResultPayload`.
+///
+/// The tag is a stable identifier (`vision` / `local` / `winocr`, or `image` for
+/// the picture path) that the result window maps to its own localised label —
+/// never a pre-formatted sentence, which would break every new language and
+/// every label tweak. Details that are worth showing go into the model field,
+/// which the window renders as a separate badge.
 fn provider_labels(cfg: &AppConfig) -> (String, String) {
     match cfg.ocr.provider.as_str() {
-        "vision" => {
-            let model = cfg.ocr.active().model;
-            (format!("vision:{}", short(&model)), model)
-        }
-        "local" => {
-            let host = host_of(&cfg.ocr.base_url);
-            (format!("local:{host}"), format!("本地 OCR ({host})"))
-        }
-        _ => {
-            let language = if cfg.ocr.language.trim().is_empty() {
-                "自动".to_string()
-            } else {
-                cfg.ocr.language.clone()
-            };
-            (format!("winocr:{language}"), format!("Windows OCR ({language})"))
-        }
+        "vision" => ("vision".to_string(), cfg.ocr.active().model),
+        "local" => ("local".to_string(), host_of(&cfg.ocr.base_url)),
+        _ => ("winocr".to_string(), String::new()),
     }
 }
 
@@ -685,10 +679,6 @@ fn host_of(base_url: &str) -> String {
         .trim_start_matches("http://")
         .trim_start_matches("https://");
     trimmed.split('/').next().unwrap_or(trimmed).to_string()
-}
-
-fn short(model: &str) -> String {
-    model.rsplit('/').next().unwrap_or(model).to_string()
 }
 
 /* ------------------------------------------------------------------ output */

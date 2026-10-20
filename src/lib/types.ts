@@ -50,7 +50,8 @@ export interface TranslateProfile {
   /** Azure Translator region / Tencent region. */
   region: string;
   model: string;
-  /** Engine tier: "standard" | "llm" (Baidu) or "llm" | "lite" | "pro" (Youdao, Tencent). */
+  /** Engine tier; "" = the engine's own default. Allowed: "standard" | "llm"
+   *  (Baidu), "standard" | "llm" | "lite" (Youdao), "llm" | "lite" (Tencent). */
   modelTier: string;
   /** How the request is authenticated: "" / "sign" (app id + secret) or "key"
    *  (Bearer). Only Baidu's LLM endpoint offers both. */
@@ -157,6 +158,8 @@ export interface ResultPayload {
   sourceText: string;
   translatedText: string | null;
   targetLang: string;
+  /** Channel tag, e.g. "winocr" / "vision" / "local" / "image" — never a
+   *  user-visible sentence; the window turns it into a localised label. */
   ocrProvider: string;
   translateProvider: string;
   model: string;

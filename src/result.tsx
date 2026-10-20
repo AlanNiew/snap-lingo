@@ -22,6 +22,18 @@ import "./styles.css";
 const BUSY: Stage[] = ["capturing", "ocr", "translate"];
 type ResultView = "both" | "source" | "translation";
 
+/**
+ * Values of `ResultPayload.ocrProvider` → the label shown in the meta row.
+ * The Rust side keeps these tags stable and language-free (see
+ * `pipeline::provider_labels`), so adding a channel only touches this table.
+ */
+const OCR_TAGS: Record<string, StringKey> = {
+  winocr: "ocrWin",
+  vision: "ocrVision",
+  local: "ocrLocal",
+  image: "badgeImageTranslate",
+};
+
 function statusKey(stage: Stage): StringKey {
   switch (stage) {
     case "capturing":
@@ -249,14 +261,10 @@ export function ResultWindow() {
   // translation, or simply wanting another attempt with a different model.
   const canRetry = Boolean(payload) && !busy;
   const done = Boolean(payload && !payload.error && !busy);
-  const ocrLabel =
-    payload?.ocrProvider === "winocr"
-      ? tt("ocrWin")
-      : payload?.ocrProvider === "vision"
-        ? tt("ocrVision")
-        : payload?.ocrProvider === "image"
-          ? tt("badgeImageTranslate")
-          : (payload?.ocrProvider ?? "");
+  // The pipeline reports a stable channel tag; the label is ours to localise.
+  const ocrTag = payload?.ocrProvider ?? "";
+  const ocrKey = OCR_TAGS[ocrTag];
+  const ocrLabel = ocrTag ? (ocrKey ? tt(ocrKey) : ocrTag) : "";
   const providerLabel =
     payload && payload.translateProvider !== "none"
       ? tt(PROVIDER_KEYS[payload.translateProvider as TranslateProvider] ?? "translateOpenai")
