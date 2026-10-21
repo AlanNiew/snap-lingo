@@ -1,7 +1,7 @@
 /** The eight settings pages. Each one is a column of cards. */
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, type MonitorInfo, type OcrLanguage } from "../lib/api";
+import { api, onUpdateProgress, type MonitorInfo, type OcrLanguage } from "../lib/api";
 import {
   OCR_ENGINES,
   PROVIDER_KEYS,
@@ -17,7 +17,7 @@ import {
   EMPTY_PROFILE,
   type AppConfig,
   type ConnectionCheck,
-  type DownloadedUpdate,
+  type UpdateDownloadState,
   type EndpointInfo,
   type HistoryItem,
   type LogFile,
@@ -1008,6 +1008,16 @@ export function AppearanceSection({ config, patch }: Base) {
 
       <Card title={t("theme")} note={t("themeHint")}>
         <ThemePicker value={config.ui.theme} onChange={(next) => setUi({ theme: next }, true)} />
+        <Row title={t("navLayout")} hint={t("navLayoutHint")}>
+          <Select
+            value={config.ui.navLayout ?? "side"}
+            onChange={(value) => setUi({ navLayout: value as AppConfig["ui"]["navLayout"] }, true)}
+            options={[
+              { value: "side", label: t("navSide") },
+              { value: "top", label: t("navTop") },
+            ]}
+          />
+        </Row>
         <Row title={t("uiLanguage")}>
           <div className="segmented">
             {[
@@ -1469,24 +1479,66 @@ function formatSize(bytes: number): string {
 export function UpdateSection({ config, patch }: Base) {
   const { t } = useT();
   const [info, setInfo] = useState<UpdateInfo | null>(null);
-  const [downloaded, setDownloaded] = useState<DownloadedUpdate | null>(null);
-  const [busy, setBusy] = useState<"check" | "download" | "install" | null>(null);
+  const [download, setDownload] = useState<UpdateDownloadState | null>(null);
+  const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
 
   const setUpdate = (next: Partial<AppConfig["update"]>, immediate = false) =>
     patch((cfg) => ({ ...cfg, update: { ...cfg.update, ...next } }), immediate);
 
   const check = useCallback(async () => {
-    setBusy("check");
+    setChecking(true);
     setError("");
-    setDownloaded(null);
     try {
-      setInfo(await api.checkUpdate());
+      const next = await api.checkUpdate();
+      setInfo(next);
+      // The installer may still be sitting in the temp folder from an earlier
+      // attempt — then the button installs instead of downloading again.
+      if (next.hasUpdate && next.assetName) {
+        try {
+          const cached = await api.cachedUpdate(next.assetName);
+          if (cached) {
+            setDownload({
+              status: "ready",
+              received: cached.bytes,
+              total: cached.bytes,
+              path: cached.path,
+              name: cached.name,
+              bytes: cached.bytes,
+              error: "",
+            });
+          }
+        } catch {
+          /* no cached file — nothing to do */
+        }
+      }
     } catch (err) {
       setError(String(err));
     } finally {
-      setBusy(null);
+      setChecking(false);
     }
+  }, []);
+
+  // The download itself runs in the backend, so this page can be left and
+  // reopened without losing it: re-attach to whatever is going on.
+  useEffect(() => {
+    let alive = true;
+    let stop: (() => void) | null = null;
+    void (async () => {
+      try {
+        const snapshot = await api.updateState();
+        if (alive && snapshot.status !== "idle") setDownload(snapshot);
+      } catch {
+        /* backend not ready yet */
+      }
+      stop = await onUpdateProgress((snapshot) => {
+        if (alive) setDownload(snapshot);
+      });
+    })();
+    return () => {
+      alive = false;
+      stop?.();
+    };
   }, []);
 
   // Opening the page is an explicit "tell me" — check right away.
@@ -1494,34 +1546,44 @@ export function UpdateSection({ config, patch }: Base) {
     void check();
   }, [check]);
 
-  const download = async () => {
-    setBusy("download");
+  const start = async () => {
     setError("");
+    if (download?.status === "ready") {
+      try {
+        await api.installUpdate(download.path);
+      } catch (err) {
+        setError(String(err));
+      }
+      return;
+    }
     try {
-      setDownloaded(await api.downloadUpdate());
+      setDownload(await api.startUpdateDownload());
     } catch (err) {
       setError(String(err));
-    } finally {
-      setBusy(null);
     }
   };
 
-  const install = async () => {
-    if (!downloaded) return;
-    setBusy("install");
-    try {
-      await api.installUpdate(downloaded.path);
-    } catch (err) {
-      setError(String(err));
-      setBusy(null);
-    }
-  };
+  const downloading = download?.status === "downloading";
+  const ready = download?.status === "ready";
+  const percent =
+    downloading && download && download.total > 0
+      ? Math.min(100, Math.round((download.received / download.total) * 100))
+      : null;
+  const progressText = download
+    ? percent !== null
+      ? t("updateProgress", {
+          done: formatSize(download.received),
+          total: formatSize(download.total),
+          percent,
+        })
+      : t("updateProgressUnknown")
+    : "";
 
   const latest = info?.latest ? `v${info.latest}` : "—";
   const hasUpdate = Boolean(info?.hasUpdate);
   const statusText = info?.error
     ? info.error
-    : busy === "check"
+    : checking
       ? t("updateChecking")
       : hasUpdate
         ? t("updateAvailable", { v: info?.latest ?? "" })
@@ -1544,9 +1606,9 @@ export function UpdateSection({ config, patch }: Base) {
             type="button"
             className="btn btn-sm"
             onClick={() => void check()}
-            disabled={busy !== null}
+            disabled={checking}
           >
-            {busy === "check" ? <span className="spinner" aria-hidden="true" /> : null}
+            {checking ? <span className="spinner" aria-hidden="true" /> : null}
             {t("updateCheck")}
           </button>
         }
@@ -1561,52 +1623,81 @@ export function UpdateSection({ config, patch }: Base) {
           {error ? <div className="note bad">{error}</div> : null}
 
           {hasUpdate ? (
-            <div className="update-actions">
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={() => void download()}
-                disabled={busy !== null || !info?.assetUrl}
-              >
-                {busy === "download" ? <span className="spinner" aria-hidden="true" /> : null}
-                {busy === "download" ? t("updateDownloading") : t("updateDownload")}
-              </button>
-              {!info?.assetUrl ? (
+            <div className="stack">
+              <div className="update-actions">
                 <button
                   type="button"
-                  className="btn btn-sm"
-                  onClick={() => void api.openExternal(info?.pageUrl ?? "")}
+                  className="btn btn-primary btn-sm"
+                  onClick={() => void start()}
+                  disabled={downloading || !info?.assetUrl}
                 >
-                  {t("updateOpenPage")}
+                  {downloading ? <span className="spinner" aria-hidden="true" /> : null}
+                  {ready
+                    ? t("updateInstall")
+                    : downloading
+                      ? t("updateDownloading")
+                      : t("updateDownload")}
                 </button>
+                {!info?.assetUrl ? (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => void api.openExternal(info?.pageUrl ?? "")}
+                  >
+                    {t("updateOpenPage")}
+                  </button>
+                ) : null}
+              </div>
+
+              {downloading ? (
+                <div
+                  className="update-progress"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={percent ?? undefined}
+                >
+                  <span
+                    className={cx("update-progress-bar", percent === null && "is-indeterminate")}
+                    style={percent !== null ? { width: `${percent}%` } : undefined}
+                  />
+                </div>
+              ) : null}
+
+              {downloading ? <div className="note">{progressText}</div> : null}
+
+              {ready ? (
+                <div className="note ok">
+                  {t("updateDownloaded", {
+                    name: download?.name ?? "",
+                    size: formatSize(download?.bytes ?? 0),
+                  })}
+                </div>
+              ) : null}
+
+              {ready ? <div className="note">{t("updateInstallHint")}</div> : null}
+
+              {download?.status === "error" ? (
+                <div className="stack">
+                  <div className="note bad">{download.error || t("updateFailed")}</div>
+                  {info?.assetUrl ? (
+                    <div className="update-actions">
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => void api.openExternal(info.assetUrl)}
+                      >
+                        {t("updateBrowserDownload")}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           ) : null}
 
           {!info?.assetUrl && info && !info.error ? (
             <div className="note warn">{t("updateNoAsset")}</div>
-          ) : null}
-
-          {downloaded ? (
-            <>
-              <div className="note ok">
-                {t("updateDownloaded", {
-                  name: downloaded.name,
-                  size: formatSize(downloaded.bytes),
-                })}
-              </div>
-              <div className="update-actions">
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  onClick={() => void install()}
-                  disabled={busy !== null}
-                >
-                  {t("updateInstall")}
-                </button>
-              </div>
-              <div className="note">{t("updateInstallHint")}</div>
-            </>
           ) : null}
 
           {info?.notes ? (
@@ -1643,6 +1734,15 @@ export function UpdateSection({ config, patch }: Base) {
               onChange={(value) => setUpdate({ repo: value })}
               onBlur={() => setUpdate({ repo: config.update.repo }, true)}
               placeholder="owner/name"
+              mono
+            />
+          </Field>
+          <Field label={t("updateMirror")} hint={t("updateMirrorHint")}>
+            <TextInput
+              value={config.update.mirror}
+              onChange={(value) => setUpdate({ mirror: value })}
+              onBlur={() => setUpdate({ mirror: config.update.mirror }, true)}
+              placeholder="https://ghproxy.net/"
               mono
             />
           </Field>

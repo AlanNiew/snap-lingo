@@ -20,6 +20,21 @@ pub const DEFAULT_LOCAL_OCR_URL: &str = "http://127.0.0.1:1224";
 /// Preset ids are short lowercase slugs (the built-in list lives in the UI).
 /// Anything else counts as "hand-filled", so a stray string can never create an
 /// unexpected credential slot.
+/// A download accelerator must be a bare `https://host/` style prefix: strip
+/// whitespace, require an http(s) scheme and keep exactly one trailing slash.
+/// Anything else silently becomes "no mirror", which is always safe.
+fn normalize_mirror(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        return String::new();
+    }
+    format!("{}/", trimmed.trim_end_matches('/'))
+}
+
 fn vendor_id(value: &str) -> String {
     let value = value.trim();
     let ok = !value.is_empty()
@@ -361,6 +376,9 @@ pub struct UiConfig {
     pub language: String,
     /// Show the corner notice card when something fails.
     pub notify: bool,
+    /// Where the page switcher sits: `side` (default) or `top`. Toggled from
+    /// the title bar, so it is remembered across launches.
+    pub nav_layout: String,
 }
 
 impl Default for UiConfig {
@@ -375,6 +393,7 @@ impl Default for UiConfig {
             theme: "system".into(),
             language: "zh".into(),
             notify: true,
+            nav_layout: "side".into(),
         }
     }
 }
@@ -404,6 +423,10 @@ pub struct UpdateConfig {
     pub enabled: bool,
     /// `owner/name` — the repository whose releases are polled.
     pub repo: String,
+    /// Optional download accelerator, e.g. `https://ghproxy.net/`. Prefixed to
+    /// the GitHub asset URL, because `objects.githubusercontent.com` is not
+    /// reachable from some networks while the API itself is.
+    pub mirror: String,
 }
 
 impl Default for UpdateConfig {
@@ -411,6 +434,7 @@ impl Default for UpdateConfig {
         Self {
             enabled: true,
             repo: crate::update::DEFAULT_REPO.to_string(),
+            mirror: String::new(),
         }
     }
 }
@@ -517,10 +541,15 @@ impl AppConfig {
         ) {
             self.ui.theme = "system".into();
         }
+        // Where the page switcher lives; anything else means the classic sidebar.
+        if !matches!(self.ui.nav_layout.as_str(), "side" | "top") {
+            self.ui.nav_layout = "side".into();
+        }
         self.history.limit = self.history.limit.clamp(0, 1000);
         // The updater polls one repository; anything unusable falls back to the
         // built-in default so a typo cannot silently disable updates.
         self.update.repo = crate::update::normalize_repo(&self.update.repo);
+        self.update.mirror = normalize_mirror(&self.update.mirror);
         self.ocr.vendor = vendor_id(&self.ocr.vendor);
         self.translate.vendor = vendor_id(&self.translate.vendor);
         // Vision settings from before per-vendor profiles were flat fields. Move

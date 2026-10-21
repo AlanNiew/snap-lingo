@@ -1966,6 +1966,46 @@ body.notice-body {
   gap: 8px;
 }
 
+/* Thin determinate bar under the download button; the indeterminate variant
+   sweeps while the server has not told us the size yet. */
+.update-progress {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-3, var(--border));
+}
+
+.update-progress-bar {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 200ms var(--ease, ease);
+}
+
+.update-progress-bar.is-indeterminate {
+  width: 40%;
+  animation: update-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes update-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-progress-bar.is-indeterminate {
+    width: 100%;
+    animation: none;
+  }
+}
+
 .update-notes {
   margin: 0;
   padding: 10px 12px;
@@ -1989,4 +2029,173 @@ body.notice-body {
 .notice.notice-update .notice-mark {
   background: var(--accent-strong);
   color: var(--on-accent);
+}
+
+/* Window chrome ------------------------------------------------------------
+   The settings window is undecorated, so this file draws the title bar in the
+   palette's own colours and restores the resize edges the native frame had. */
+
+.window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-soft);
+  user-select: none;
+}
+
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.titlebar-brand .brand-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.titlebar-drag {
+  flex: 1;
+  height: 100%;
+}
+
+.titlebar-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.titlebar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition:
+    background 120ms var(--ease),
+    color 120ms var(--ease);
+}
+
+.titlebar-btn svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.titlebar-btn:hover {
+  background: var(--surface-3, var(--border));
+  color: var(--text);
+}
+
+.titlebar-close:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+.window .settings {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+/* Grid items default to `min-height: auto`, which would let a long page push
+   the footer instead of scrolling inside its own cell. */
+.window .content {
+  min-height: 0;
+}
+
+/* Invisible resize edges, 5px wide, sitting above the page content. */
+.rh {
+  position: fixed;
+  z-index: 60;
+}
+
+.rh-n { top: 0; left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
+.rh-s { bottom: 0; left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
+.rh-w { left: 0; top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
+.rh-e { right: 0; top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
+.rh-nw { top: 0; left: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.rh-ne { top: 0; right: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.rh-sw { bottom: 0; left: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.rh-se { bottom: 0; right: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+
+/* Top navigation: the same items, laid out as one scrollable row. */
+.settings[data-nav="top"] {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.settings[data-nav="top"] .sidebar {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  border-right: 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.settings[data-nav="top"] .sidebar::-webkit-scrollbar {
+  display: none;
+}
+
+.settings[data-nav="top"] .sidebar .brand {
+  display: none;
+}
+
+.settings[data-nav="top"] .nav-item {
+  flex: 0 0 auto;
+  width: auto;
+  justify-content: center;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.settings[data-nav="top"] .nav-footer {
+  margin: 0 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  font-size: 11px;
+}
+
+.settings[data-nav="top"] .nav-footer span {
+  display: none;
+}
+
+.settings[data-nav="top"] .nav-footer .btn {
+  width: auto;
+}
+
+.settings[data-nav="top"] .content {
+  padding-top: 18px;
 }

@@ -304,6 +304,17 @@ const STRINGS = {
     "System follows the Windows light/dark setting; the other palettes apply instantly to all three windows.",
   ],
   themePicked: ["当前主题", "Current theme"],
+  navLayout: ["导航栏位置", "Navigation layout"],
+  navLayoutHint: [
+    "侧边栏适合大窗口逐项浏览；顶部标签适合宽而矮的窗口。也可以点标题栏上的按钮快速切换。",
+    "A sidebar suits tall windows; top tabs suit wide, short ones. The title-bar button flips it instantly.",
+  ],
+  navSide: ["左侧栏", "Sidebar"],
+  navTop: ["顶部标签", "Top tabs"],
+  titlebarMinimize: ["最小化", "Minimize"],
+  titlebarMaximize: ["最大化", "Maximize"],
+  titlebarRestore: ["还原", "Restore"],
+  titlebarClose: ["关闭", "Close"],
   uiLanguage: ["界面语言", "Interface language"],
   resultFontSize: ["结果字号", "Result font size"],
   resultView: ["结果窗口显示", "Result window shows"],
@@ -408,6 +419,14 @@ const STRINGS = {
   updateNotes: ["更新说明", "What's new"],
   updateDownload: ["下载并安装", "Download and install"],
   updateDownloading: ["正在下载安装包…", "Downloading the installer…"],
+  updateProgress: [
+    "已下载 {done} / {total}（{percent}%）",
+    "Downloaded {done} / {total} ({percent}%)",
+  ],
+  updateProgressUnknown: [
+    "正在接收数据…（服务端未给出大小）",
+    "Receiving… (the server did not report a size)",
+  ],
   updateDownloaded: [
     "安装包已就绪：{name}（{size}）",
     "Installer ready: {name} ({size})",
@@ -428,6 +447,12 @@ const STRINGS = {
     "默认读取本项目的 GitHub 仓库；私有仓库需要先改成公开，否则接口会返回 404。",
     "Defaults to this project's GitHub repository. Private repositories return 404 — make it public first.",
   ],
+  updateMirror: ["下载加速前缀（可选）", "Download mirror (optional)"],
+  updateMirrorHint: [
+    "如果应用内下载提示连接超时（GitHub 的安装包域名被挡），可填 ghproxy 之类的加速前缀，例如 https://ghproxy.net/；安装包地址会拼在它后面。留空表示直连。",
+    "If the in-app download times out (GitHub's asset host is blocked), put an accelerator prefix here, e.g. https://ghproxy.net/ — the asset URL is appended to it. Empty means direct.",
+  ],
+  updateBrowserDownload: ["用浏览器下载", "Download in browser"],
   updateAuto: ["启动时检查更新", "Check for updates at launch"],
   updateAutoHint: [
     "启动约 9 秒后在后台检查一次，发现新版本时用右下角卡片提醒。",

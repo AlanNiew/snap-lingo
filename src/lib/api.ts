@@ -22,6 +22,7 @@ import type {
   SessionImage,
   StageEvent,
   TranslateConfig,
+  UpdateDownloadState,
   UpdateInfo,
 } from "./types";
 
@@ -56,6 +57,7 @@ export const EVENTS = {
   navigate: "ui:navigate",
   session: "session:changed",
   toast: "toast:changed",
+  updateProgress: "update:progress",
 } as const;
 
 export const api = {
@@ -104,7 +106,10 @@ export const api = {
   openLogs: () => invoke<void>("open_logs"),
   openUpdate: () => invoke<void>("open_update"),
   checkUpdate: () => invoke<UpdateInfo>("check_update"),
-  downloadUpdate: () => invoke<DownloadedUpdate>("download_update"),
+  updateState: () => invoke<UpdateDownloadState>("update_state"),
+  startUpdateDownload: () => invoke<UpdateDownloadState>("start_update_download"),
+  cachedUpdate: (assetName: string) =>
+    invoke<DownloadedUpdate | null>("cached_update", { assetName }),
   installUpdate: (path: string) => invoke<void>("install_update", { path }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   revealConfigDir: () => invoke<void>("reveal_config_dir"),
@@ -146,6 +151,13 @@ export function onSession(handler: (monitorId: number) => void): Promise<Unliste
 /** The branded notice window: what to say, and whether it is a failure. */
 export function onToast(handler: (notice: Notice) => void): Promise<UnlistenFn> {
   return listen<Notice>(EVENTS.toast, (event) => handler(event.payload));
+}
+
+/** Live state of the update download (bytes plus the terminal status). */
+export function onUpdateProgress(
+  handler: (progress: UpdateDownloadState) => void,
+): Promise<UnlistenFn> {
+  return listen<UpdateDownloadState>(EVENTS.updateProgress, (event) => handler(event.payload));
 }
 
 /* ------------------------------------------------------------------ helpers */

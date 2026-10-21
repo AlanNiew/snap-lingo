@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import {
   api,
+  currentWindow,
   onConfigChanged,
   onHotkeyError,
   onNavigate,
@@ -89,6 +90,159 @@ interface Toast {
   text: string;
   bad: boolean;
 }
+
+/* Window chrome -------------------------------------------------------------
+   The settings window is undecorated so its title bar can follow the palette
+   (a native bar ignores CSS completely). Eight invisible edges give back the
+   resize behaviour the frame used to provide, and the bar doubles as the
+   place where the navigation layout is flipped. */
+
+type ResizeDir =
+  | "North"
+  | "South"
+  | "East"
+  | "West"
+  | "NorthEast"
+  | "NorthWest"
+  | "SouthEast"
+  | "SouthWest";
+
+const RESIZE_EDGES: Array<{ dir: ResizeDir; className: string }> = [
+  { dir: "North", className: "rh-n" },
+  { dir: "South", className: "rh-s" },
+  { dir: "West", className: "rh-w" },
+  { dir: "East", className: "rh-e" },
+  { dir: "NorthWest", className: "rh-nw" },
+  { dir: "NorthEast", className: "rh-ne" },
+  { dir: "SouthWest", className: "rh-sw" },
+  { dir: "SouthEast", className: "rh-se" },
+];
+
+function ResizeHandles() {
+  return (
+    <>
+      {RESIZE_EDGES.map((edge) => (
+        <div
+          key={edge.dir}
+          className={cx("rh", edge.className)}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            void currentWindow.startResizeDragging(edge.dir);
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+function TitleBar({
+  layout,
+  onFlip,
+  t: tFn,
+}: {
+  layout: "side" | "top";
+  onFlip: () => void;
+  t: TFn;
+}) {
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    let stop: (() => void) | null = null;
+    const sync = () => {
+      void currentWindow
+        .isMaximized()
+        .then((value) => {
+          if (alive) setMaximized(value);
+        })
+        .catch(() => {});
+    };
+    sync();
+    void currentWindow.onResized(sync).then((fn) => {
+      stop = fn;
+    });
+    return () => {
+      alive = false;
+      stop?.();
+    };
+  }, []);
+
+  return (
+    <header className="titlebar">
+      <div className="titlebar-brand" data-tauri-drag-region>
+        <span className="brand-mark" aria-hidden="true" />
+        <span className="titlebar-name">{tFn("appName")}</span>
+      </div>
+      <div
+        className="titlebar-drag"
+        data-tauri-drag-region
+        onDoubleClick={() => void currentWindow.toggleMaximize()}
+      />
+      <div className="titlebar-tools">
+        <button
+          type="button"
+          className="titlebar-btn"
+          onClick={onFlip}
+          title={tFn(layout === "side" ? "navTop" : "navSide")}
+          aria-label={tFn(layout === "side" ? "navTop" : "navSide")}
+        >
+          {layout === "side" ? (
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+              <path d="M6 2.5v11" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+              <path d="M1.5 6h13" />
+            </svg>
+          )}
+        </button>
+        <button
+          type="button"
+          className="titlebar-btn"
+          onClick={() => void currentWindow.minimize()}
+          title={tFn("titlebarMinimize")}
+          aria-label={tFn("titlebarMinimize")}
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <path d="M3 8h10" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="titlebar-btn"
+          onClick={() => void currentWindow.toggleMaximize()}
+          title={tFn(maximized ? "titlebarRestore" : "titlebarMaximize")}
+          aria-label={tFn(maximized ? "titlebarRestore" : "titlebarMaximize")}
+        >
+          {maximized ? (
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <rect x="2.5" y="4.5" width="8" height="8" rx="1.5" />
+              <path d="M5.5 4.5V3.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-1" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+            </svg>
+          )}
+        </button>
+        <button
+          type="button"
+          className="titlebar-btn titlebar-close"
+          onClick={() => void currentWindow.close()}
+          title={tFn("titlebarClose")}
+          aria-label={tFn("titlebarClose")}
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8" />
+          </svg>
+        </button>
+      </div>
+    </header>
+  );
+}
+
 
 export default function SettingsApp() {
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -221,13 +375,29 @@ export default function SettingsApp() {
 
   if (!config) {
     return (
-      <div className="settings">
-        <main className="content">
-          <div className="empty">{translate(lang, "loading")}</div>
-        </main>
-      </div>
+      <LangCtx.Provider value={ctx}>
+        <div className="window">
+          <TitleBar layout="side" onFlip={() => {}} t={tFn} />
+          <div className="settings">
+            <main className="content">
+              <div className="empty">{translate(lang, "loading")}</div>
+            </main>
+          </div>
+          <ResizeHandles />
+        </div>
+      </LangCtx.Provider>
     );
   }
+
+  const navLayout = config.ui.navLayout === "top" ? "top" : "side";
+  const flipNav = () =>
+    patch(
+      (cfg) => ({
+        ...cfg,
+        ui: { ...cfg.ui, navLayout: cfg.ui.navLayout === "top" ? "side" : "top" },
+      }),
+      true,
+    );
 
   const base = { config, patch, notify };
   let page: ReactNode;
@@ -262,46 +432,51 @@ export default function SettingsApp() {
 
   return (
     <LangCtx.Provider value={ctx}>
-      <div className="settings">
-        <aside className="sidebar">
-          <div className="brand">
-            <span className="brand-mark" />
-            <span className="brand-name">{tFn("appName")}</span>
-          </div>
-          {NAV.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="nav-item"
-              aria-current={tab === item.id ? "true" : undefined}
-              onClick={() => setTab(item.id)}
-            >
-              <NavIcon id={item.id} />
-              <span className="nav-label">{tFn(item.key)}</span>
-              {item.id === "history" && history.length > 0 ? (
-                <span className="nav-count">{history.length}</span>
-              ) : null}
-            </button>
+      <div className="window">
+        <TitleBar layout={navLayout} onFlip={flipNav} t={tFn} />
+        <div className="settings" data-nav={navLayout}>
+          <aside className="sidebar">
+            <div className="brand">
+              <span className="brand-mark" />
+              <span className="brand-name">{tFn("appName")}</span>
+            </div>
+            {NAV.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="nav-item"
+                aria-current={tab === item.id ? "true" : undefined}
+                onClick={() => setTab(item.id)}
+              >
+                <NavIcon id={item.id} />
+                <span className="nav-label">{tFn(item.key)}</span>
+                {item.id === "history" && history.length > 0 ? (
+                  <span className="nav-count">{history.length}</span>
+                ) : null}
+              </button>
+            ))}
+            <div className="nav-footer">
+              <button type="button" className="btn btn-sm btn-block" onClick={reset}>
+                {tFn("resetDefaults")}
+              </button>
+              <span>
+                {tFn("aboutVersion")} {__APP_VERSION__}
+              </span>
+            </div>
+          </aside>
+
+          <main className="content">{page}</main>
+        </div>
+
+        <ResizeHandles />
+
+        <div className="toasts">
+          {toasts.map((toast) => (
+            <div key={toast.id} className={cx("toast", toast.bad && "toast-bad")}>
+              {toast.text}
+            </div>
           ))}
-          <div className="nav-footer">
-            <button type="button" className="btn btn-sm btn-block" onClick={reset}>
-              {tFn("resetDefaults")}
-            </button>
-            <span>
-              {tFn("aboutVersion")} {__APP_VERSION__}
-            </span>
-          </div>
-        </aside>
-
-        <main className="content">{page}</main>
-      </div>
-
-      <div className="toasts">
-        {toasts.map((toast) => (
-          <div key={toast.id} className={cx("toast", toast.bad && "toast-bad")}>
-            {toast.text}
-          </div>
-        ))}
+        </div>
       </div>
     </LangCtx.Provider>
   );

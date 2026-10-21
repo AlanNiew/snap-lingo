@@ -606,14 +606,125 @@ pub async fn check_update(app: AppHandle) -> crate::update::UpdateInfo {
     crate::update::check(&repo, &current).await
 }
 
-/// Download the installer of the newest release into the temp directory.
+/// Snapshot of the update download, so a reopened settings page can re-attach
+/// to a download that is already running.
 #[tauri::command]
-pub async fn download_update(app: AppHandle) -> Result<crate::update::Downloaded, String> {
-    let current = crate::update::app_version(&app);
-    let repo = app.state::<AppState>().config().update.repo;
-    crate::update::download(&repo, &current)
-        .await
-        .map_err(|err| format!("{err:#}"))
+pub fn update_state(state: State<'_, AppState>) -> crate::state::UpdateDownload {
+    crate::state::lock(&state.update).clone()
+}
+
+fn emit_update(app: &AppHandle, snapshot: crate::state::UpdateDownload) {
+    let _ = app.emit("update:progress", snapshot);
+}
+
+/// Starts downloading the newest installer in the background and returns at
+/// once. The work lives in the app state, not in the page that asked for it, so
+/// switching tabs or closing the settings window cannot cancel it; when the file
+/// is complete the installer is launched automatically (one button, one click).
+#[tauri::command]
+pub async fn start_update_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::state::UpdateDownload, String> {
+    let current = crate::state::lock(&state.update).clone();
+    // Already running, or already on disk: report it instead of starting over.
+    if current.status == "downloading" || current.status == "ready" {
+        return Ok(current);
+    }
+
+    let version = crate::update::app_version(&app);
+    let config = state.config();
+    let repo = config.update.repo;
+    let mirror = config.update.mirror;
+
+    let started = {
+        let mut slot = crate::state::lock(&state.update);
+        *slot = crate::state::UpdateDownload {
+            status: "downloading".into(),
+            ..crate::state::UpdateDownload::default()
+        };
+        slot.clone()
+    };
+    emit_update(&app, started.clone());
+
+    let worker = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let reporter = worker.clone();
+        let result = crate::update::download(&repo, &version, &mirror, move |progress| {
+            let snapshot = {
+                let state = reporter.state::<AppState>();
+                let mut slot = crate::state::lock(&state.update);
+                slot.received = progress.received;
+                slot.total = progress.total;
+                slot.clone()
+            };
+            emit_update(&reporter, snapshot);
+        })
+        .await;
+
+        match result {
+            Ok(done) => {
+                let snapshot = {
+                    let state = worker.state::<AppState>();
+                    let mut slot = crate::state::lock(&state.update);
+                    slot.status = "ready".into();
+                    slot.received = done.bytes;
+                    slot.total = done.bytes;
+                    slot.path = done.path.clone();
+                    slot.name = done.name.clone();
+                    slot.bytes = done.bytes;
+                    slot.error.clear();
+                    slot.clone()
+                };
+                emit_update(&worker, snapshot);
+                log::info!("更新包已下载完成，即将启动安装程序");
+                match crate::update::install(std::path::Path::new(&done.path)) {
+                    Ok(()) => {
+                        let state = worker.state::<AppState>();
+                        state.quitting.store(true, std::sync::atomic::Ordering::SeqCst);
+                        let handle = worker.clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                            handle.exit(0);
+                        });
+                    }
+                    Err(err) => {
+                        let message = format!("{err:#}");
+                        log::error!("启动安装程序失败：{message}");
+                        let snapshot = {
+                            let state = worker.state::<AppState>();
+                            let mut slot = crate::state::lock(&state.update);
+                            slot.status = "error".into();
+                            slot.error = message;
+                            slot.clone()
+                        };
+                        emit_update(&worker, snapshot);
+                    }
+                }
+            }
+            Err(err) => {
+                let message = format!("{err:#}");
+                log::error!("下载更新失败：{message}");
+                let snapshot = {
+                    let state = worker.state::<AppState>();
+                    let mut slot = crate::state::lock(&state.update);
+                    slot.status = "error".into();
+                    slot.error = message;
+                    slot.clone()
+                };
+                emit_update(&worker, snapshot);
+            }
+        }
+    });
+
+    Ok(started)
+}
+
+/// An installer a previous click already downloaded, so the UI can offer
+/// "install" instead of pulling it again.
+#[tauri::command]
+pub fn cached_update(asset_name: String) -> Option<crate::update::Downloaded> {
+    crate::update::cached(&asset_name)
 }
 
 /// Run a downloaded installer: this process steps aside so the installer can

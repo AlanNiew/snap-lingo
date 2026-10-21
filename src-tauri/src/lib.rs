@@ -388,7 +388,9 @@ pub fn run() {
             commands::open_logs,
             commands::open_external,
             commands::check_update,
-            commands::download_update,
+            commands::update_state,
+            commands::start_update_download,
+            commands::cached_update,
             commands::install_update,
             commands::open_update,
         ]);

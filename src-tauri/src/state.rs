@@ -9,6 +9,7 @@ use crate::config::{AppConfig, ConfigStore};
 use crate::model::{HistoryItem, ResultPayload};
 use crate::providers::Providers;
 use image::RgbaImage;
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -66,8 +67,29 @@ impl CaptureSession {
         let y1 = (y + h).min(fh);
         let w = (x1 - x0).max(0.0);
         let h = (y1 - y0).max(0.0);
-        (x0.round() as i32, y0.round() as i32, w.round() as i32, h.round() as i32)
+        (
+            x0.round() as i32,
+            y0.round() as i32,
+            w.round() as i32,
+            h.round() as i32,
+        )
     }
+}
+
+/// State of the one update download this process can run, shared with the UI so
+/// it can be re-attached after the settings page is left and opened again.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct UpdateDownload {
+    /// `idle` | `downloading` | `ready` | `error`
+    pub status: String,
+    pub received: u64,
+    pub total: u64,
+    /// Set once the installer is on disk.
+    pub path: String,
+    pub name: String,
+    pub bytes: u64,
+    pub error: String,
 }
 
 pub struct AppState {
@@ -87,6 +109,9 @@ pub struct AppState {
     /// Physical size the user last dragged the result window to. The next popup
     /// reuses it instead of snapping back to half the screen.
     pub result_size: Mutex<Option<(u32, u32)>>,
+    /// Download progress of an update installer. Lives here — not in the settings
+    /// page — so switching tabs (or closing the window) cannot cancel it.
+    pub update: Mutex<UpdateDownload>,
     /// True from the moment a capture starts until the overlays are gone.
     pub busy: AtomicBool,
     /// Set when the user picks 退出, so window-closing stops being vetoed.
@@ -112,6 +137,7 @@ impl AppState {
             history_path,
             last_toast: Mutex::new(None),
             result_size: Mutex::new(None),
+            update: Mutex::new(UpdateDownload::default()),
             busy: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
         })
@@ -227,7 +253,11 @@ mod tests {
                 width: frame.0,
                 height: frame.1,
                 scale_factor: 2.0,
-                frame: std::sync::Arc::new(RgbaImage::from_pixel(frame.0, frame.1, Rgba([0, 0, 0, 255]))),
+                frame: std::sync::Arc::new(RgbaImage::from_pixel(
+                    frame.0,
+                    frame.1,
+                    Rgba([0, 0, 0, 255]),
+                )),
             },
             preview_data_url: String::new(),
         }
@@ -242,7 +272,10 @@ mod tests {
         let e = session.entry(1).unwrap();
         // A 2×-downscaled backdrop must not change the rectangle: it is already
         // in frame pixels.
-        assert_eq!(session.frame_rect(e, 10.0, 20.0, 100.0, 50.0), (10, 20, 100, 50));
+        assert_eq!(
+            session.frame_rect(e, 10.0, 20.0, 100.0, 50.0),
+            (10, 20, 100, 50)
+        );
     }
 
     #[test]
@@ -253,7 +286,13 @@ mod tests {
         };
         let e = session.entry(1).unwrap();
         assert_eq!(session.frame_rect(e, 5.0, 6.0, 7.0, 8.0), (5, 6, 7, 8));
-        assert_eq!(session.frame_rect(e, -20.0, -5.0, 40.0, 40.0), (0, 0, 20, 35));
-        assert_eq!(session.frame_rect(e, 790.0, 590.0, 100.0, 100.0), (790, 590, 10, 10));
+        assert_eq!(
+            session.frame_rect(e, -20.0, -5.0, 40.0, 40.0),
+            (0, 0, 20, 35)
+        );
+        assert_eq!(
+            session.frame_rect(e, 790.0, 590.0, 100.0, 100.0),
+            (790, 590, 10, 10)
+        );
     }
 }

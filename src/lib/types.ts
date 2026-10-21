@@ -108,6 +108,8 @@ export interface UiConfig {
   /** Palette id; `system` follows the OS and resolves to light/dark. */
   theme: "system" | "light" | "dark" | "paper" | "midnight" | "forest" | "contrast";
   language: "zh" | "en";
+  /** Page switcher placement; toggled from the title bar. */
+  navLayout: "side" | "top";
 }
 
 export interface HistoryConfig {
@@ -121,6 +123,8 @@ export interface UpdateConfig {
   enabled: boolean;
   /** `owner/name` of the repository whose releases are polled. */
   repo: string;
+  /** Optional download accelerator, e.g. `https://ghproxy.net/`. */
+  mirror: string;
 }
 
 export interface UpdateInfo {
@@ -140,6 +144,18 @@ export interface DownloadedUpdate {
   path: string;
   name: string;
   bytes: number;
+}
+
+/** Shared state of the (at most one) update download running in the backend. */
+export interface UpdateDownloadState {
+  /** "idle" | "downloading" | "ready" | "error" */
+  status: "idle" | "downloading" | "ready" | "error";
+  received: number;
+  total: number;
+  path: string;
+  name: string;
+  bytes: number;
+  error: string;
 }
 
 export interface AppConfig {

@@ -54,6 +54,10 @@ pub fn settings_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .title("SnapLingo 设置")
         .inner_size(940.0, 680.0)
         .min_inner_size(780.0, 560.0)
+        // Undecorated: the page paints its own title bar so it follows the
+        // palette. Resizing is handled by invisible edges in the settings page.
+        .decorations(false)
+        .shadow(true)
         .center()
         .build()
 }

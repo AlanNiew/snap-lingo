@@ -253,8 +253,26 @@ fn numeric_segments(version: &str) -> Vec<u64> {
         .collect()
 }
 
+/// Byte counter for the download UI. `total` is 0 when the server does not send
+/// a `Content-Length` (rare for GitHub assets, but handled).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProgress {
+    pub received: u64,
+    pub total: u64,
+}
+
 /// Downloads the installer of the newest release into the temp directory.
-pub async fn download(repo: &str, current: &str) -> Result<Downloaded> {
+///
+/// `on_progress` is called while the body streams in (throttled) and once more
+/// with the final sizes, so the UI can show a real progress bar instead of a
+/// spinner that looks stuck on a slow connection.
+pub async fn download(
+    repo: &str,
+    current: &str,
+    mirror: &str,
+    on_progress: impl Fn(UpdateProgress),
+) -> Result<Downloaded> {
     let info = check(repo, current).await;
     if let Some(error) = info.error {
         bail!("{error}");
@@ -263,31 +281,67 @@ pub async fn download(repo: &str, current: &str) -> Result<Downloaded> {
         bail!("最新版本 {} 没有附带安装包，请打开 Release 页面手动下载。", info.latest);
     }
     let http = client(DOWNLOAD_TIMEOUT)?;
-    log::info!("下载更新：GET {}", info.asset_url);
+    // A mirror is prefixed verbatim (`https://ghproxy.net/` + the GitHub URL),
+    // which is the shape every accelerator in the wild expects.
+    let url = if mirror.trim().is_empty() {
+        info.asset_url.clone()
+    } else {
+        format!("{}{}", mirror.trim(), info.asset_url)
+    };
+    log::info!("下载更新：GET {url}");
     let response = http
-        .get(&info.asset_url)
+        .get(&url)
         .header("Accept", "application/octet-stream")
         .send()
         .await
-        .with_context(|| format!("下载 {} 失败", info.asset_name))?;
+        .with_context(|| {
+            format!(
+                "下载 {} 失败（{url}）。如果这里连不上 GitHub，可在「更新来源」里填一个下载加速前缀，或点「用浏览器下载」。",
+                info.asset_name
+            )
+        })?;
     let status = response.status();
     if !status.is_success() {
         bail!("下载安装包失败：HTTP {status}。");
     }
-    let bytes = response
-        .bytes()
+    let total = response.content_length().unwrap_or(0);
+    log::info!("开始下载更新包：{}（{} 字节）", info.asset_name, total);
+    on_progress(UpdateProgress { received: 0, total });
+
+    let mut payload: Vec<u8> = Vec::with_capacity(total as usize);
+    let mut received: u64 = 0;
+    let mut last_report = std::time::Instant::now();
+    let mut response = response;
+    while let Some(part) = response
+        .chunk()
         .await
         .context("下载安装包时连接中断")?
-        .to_vec();
+    {
+        received += part.len() as u64;
+        payload.extend_from_slice(&part);
+        // ~8 events/second is plenty for a progress bar and keeps the IPC quiet.
+        if last_report.elapsed() >= std::time::Duration::from_millis(120) {
+            on_progress(UpdateProgress { received, total });
+            last_report = std::time::Instant::now();
+        }
+    }
+    if payload.is_empty() {
+        bail!("下载到的安装包是空的，请稍后重试或到 Release 页面手动下载。");
+    }
+    on_progress(UpdateProgress {
+        received,
+        total: total.max(received),
+    });
+
     let dir = std::env::temp_dir().join("SnapLingo");
     std::fs::create_dir_all(&dir).context("无法创建临时目录")?;
     let path = dir.join(safe_file_name(&info.asset_name));
-    std::fs::write(&path, &bytes).context("无法写入安装包")?;
-    log::info!("更新包已保存：{}（{} 字节）", path.display(), bytes.len());
+    std::fs::write(&path, &payload).context("无法写入安装包")?;
+    log::info!("更新包已保存：{}（{} 字节）", path.display(), payload.len());
     Ok(Downloaded {
         path: path.to_string_lossy().to_string(),
         name: safe_file_name(&info.asset_name),
-        bytes: bytes.len() as u64,
+        bytes: payload.len() as u64,
     })
 }
 
@@ -326,6 +380,22 @@ pub fn install(path: &Path) -> Result<()> {
 pub fn downloaded_path(name: &str) -> Option<PathBuf> {
     let path = std::env::temp_dir().join("SnapLingo").join(safe_file_name(name));
     path.is_file().then_some(path)
+}
+
+/// An installer an earlier session already downloaded. Reusing it means clicking
+/// the button twice does not pull the same 2.6 MB again.
+pub fn cached(asset_name: &str) -> Option<Downloaded> {
+    if asset_name.trim().is_empty() {
+        return None;
+    }
+    let name = safe_file_name(asset_name);
+    let path = downloaded_path(&name)?;
+    let bytes = std::fs::metadata(&path).ok()?.len();
+    (bytes > 0).then(|| Downloaded {
+        path: path.to_string_lossy().to_string(),
+        name,
+        bytes,
+    })
 }
 
 fn truncate(text: &str, limit: usize) -> String {
