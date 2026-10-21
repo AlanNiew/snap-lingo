@@ -292,10 +292,15 @@ pub fn run() {
                 }
             }
 
-            // First run (or a wiped config): open settings instead of leaving
-            // the user with an app that does nothing when they press the key.
+            // Tray-only launch: no window pops up. A fresh install is told where
+            // to go through the corner card instead (it fades on its own, and
+            // `ui.notify` can switch it off).
             if !ready {
-                windows::show_settings(&handle);
+                pipeline::notify(
+                    &handle,
+                    "notice",
+                    "SnapLingo 已在托盘运行：右键托盘图标 → 设置…，配置翻译渠道后即可按快捷键截图。",
+                );
             }
 
             // Last line of defence: never leave the screen covered forever.

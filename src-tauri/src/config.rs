@@ -84,7 +84,9 @@ impl Default for OcrProfile {
 
 impl OcrProfile {
     pub fn is_blank(&self) -> bool {
-        self.base_url.trim().is_empty() && self.api_key.trim().is_empty() && self.model.trim().is_empty()
+        self.base_url.trim().is_empty()
+            && self.api_key.trim().is_empty()
+            && self.model.trim().is_empty()
     }
 }
 
@@ -302,10 +304,13 @@ impl Default for TranslateConfig {
             },
         );
         Self {
-            provider: "openai".into(),
+            // 百度 native text translation is the cheapest thing that works out
+            // of the box, so it is the default channel; anything else is one
+            // click away in the dropdown.
+            provider: "baidu".into(),
             vendor: String::new(),
             profiles,
-            target_lang: "zh-CN".into(),
+            target_lang: "auto".into(),
             deepl_plan: "free".into(),
             prompt: String::new(),
             base_url: String::new(),
@@ -383,7 +388,10 @@ pub struct HistoryConfig {
 
 impl Default for HistoryConfig {
     fn default() -> Self {
-        Self { enabled: true, limit: 100 }
+        Self {
+            enabled: true,
+            limit: 100,
+        }
     }
 }
 
@@ -451,14 +459,7 @@ impl AppConfig {
         }
         if !matches!(
             self.translate.provider.as_str(),
-            "openai"
-                | "deepl"
-                | "microsoft"
-                | "google"
-                | "youdao"
-                | "baidu"
-                | "tencent"
-                | "none"
+            "openai" | "deepl" | "microsoft" | "google" | "youdao" | "baidu" | "tencent" | "none"
         ) {
             // Youdao's LLM translation used to be a channel of its own; it is now
             // the `llm` tier of the Youdao channel. Same for the stored selection.
@@ -502,7 +503,10 @@ impl AppConfig {
         self.capture.max_image_side = self.capture.max_image_side.clamp(320, 4096);
         self.capture.jpeg_quality = self.capture.jpeg_quality.clamp(40, 100);
         self.ui.result_font_size = self.ui.result_font_size.clamp(11, 32);
-        if !matches!(self.ui.result_view.as_str(), "source" | "translation" | "both") {
+        if !matches!(
+            self.ui.result_view.as_str(),
+            "source" | "translation" | "both"
+        ) {
             self.ui.result_view = "both".into();
         }
         // Palettes the UI can paint. Anything else falls back to `system`.
@@ -608,7 +612,7 @@ impl AppConfig {
             p.bearer = p.bearer.trim().to_string();
         }
         if self.translate.target_lang.trim().is_empty() {
-            self.translate.target_lang = "zh-CN".into();
+            self.translate.target_lang = "auto".into();
         }
     }
 
@@ -658,9 +662,7 @@ impl AppConfig {
             "none" => true,
             "deepl" | "microsoft" | "google" => !p.api_key.trim().is_empty(),
             // These engines sign the request with a second credential.
-            "youdao" | "tencent" => {
-                !p.api_key.trim().is_empty() && !p.api_secret.trim().is_empty()
-            }
+            "youdao" | "tencent" => !p.api_key.trim().is_empty() && !p.api_secret.trim().is_empty(),
             // Baidu's LLM endpoint can also authenticate with a Bearer API Key,
             // in which case only the app id and that key are needed.
             "baidu" => {
@@ -685,7 +687,9 @@ pub struct ConfigStore {
 
 impl ConfigStore {
     pub fn new(dir: PathBuf) -> Self {
-        Self { path: dir.join("config.json") }
+        Self {
+            path: dir.join("config.json"),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -736,7 +740,8 @@ mod tests {
         let cfg: AppConfig = serde_json::from_str(r#"{"shortcut":"Ctrl+Alt+Q"}"#).unwrap();
         assert_eq!(cfg.shortcut, "Ctrl+Alt+Q");
         assert_eq!(cfg.ocr.provider, "winocr");
-        assert_eq!(cfg.translate.target_lang, "zh-CN");
+        assert_eq!(cfg.translate.provider, "baidu");
+        assert_eq!(cfg.translate.target_lang, "auto");
         assert!(cfg.capture.all_monitors);
     }
 
@@ -849,7 +854,11 @@ mod tests {
 
         cfg.translate.profile_mut("tencent").model_tier = "nonsense".into();
         cfg.sanitize();
-        assert_eq!(cfg.translate.active().model_tier, "", "unknown tiers are dropped");
+        assert_eq!(
+            cfg.translate.active().model_tier,
+            "",
+            "unknown tiers are dropped"
+        );
     }
 
     #[test]
@@ -858,10 +867,16 @@ mod tests {
         // Offline OCR alone is enough to take a shot and recognise text; only
         // the translation step needs a service, and it reports its own error.
         assert!(cfg.is_ocr_ready(), "offline winocr alone should be usable");
-        assert!(!cfg.is_ready(), "full readiness still needs a translation path");
+        assert!(
+            !cfg.is_ready(),
+            "full readiness still needs a translation path"
+        );
 
         cfg.ocr.provider = "vision".into();
-        assert!(!cfg.is_ocr_ready(), "vision without key/model must not be ready");
+        assert!(
+            !cfg.is_ocr_ready(),
+            "vision without key/model must not be ready"
+        );
 
         cfg.ocr.api_key = "k".into();
         cfg.ocr.model = "m".into();

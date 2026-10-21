@@ -3,7 +3,7 @@
 按下快捷键 → 框选屏幕上的任意文字 → 自动 OCR → 自动翻译 → 结果卡片。
 
 SnapLingo 是一个 Windows 桌面小工具，常驻托盘，**启动快、内存占用低**（Tauri 2 + WebView2，无 Electron）。
-默认走「Windows 内置 OCR（离线、免费、不需要 Key）+ 你自己的 OpenAI 兼容翻译接口」，开箱即可用；
+默认是「Windows 内置 OCR（离线、免费、不需要 Key）+ 百度翻译（填 APP ID 与密钥即可）+ 目标语言智能判断」，启动后只在托盘，不会弹窗打扰；
 识别引擎可在四种之间切换：Windows 内置 OCR、**本地 OCR 服务**（Umi-OCR 等，图片不出本机）、**视觉大模型**（一条请求同时拿到原文和译文）、**由翻译渠道直接读图**（有道 / 百度 / 腾讯的一步图片翻译）。
 
 ---
@@ -119,8 +119,8 @@ npm run tauri build
     "prompt": ""
   },
   "translate": {
-    "provider": "openai",            // openai | deepl | microsoft | google | youdao | baidu | tencent | none
-    "vendor": "nvidia",              // openai 渠道里选中的厂商（nvidia / deepseek / 智谱 / opencode …）
+    "provider": "baidu",             // openai | deepl | microsoft | google | youdao | baidu | tencent | none
+    "vendor": "",                    // openai 渠道里选中的厂商（nvidia / deepseek / 智谱 / opencode …）
     "profiles": {                    // 每个渠道（含 openai 渠道里的每个厂商）各存各的凭证
       "nvidia":    { "baseUrl": "https://integrate.api.nvidia.com/v1", "apiKey": "", "model": "nvidia/nemotron-3-ultra-550b-a55b" },
       "deepseek":  { "baseUrl": "https://api.deepseek.com/v1", "apiKey": "", "model": "deepseek-flash" },
@@ -132,7 +132,7 @@ npm run tauri build
       "baidu":     { "apiKey": "", "apiSecret": "", "modelTier": "standard", "auth": "sign", "bearer": "" }, // 大模型版可改 auth:"key" + bearer
       "tencent":   { "apiKey": "", "apiSecret": "", "region": "", "modelTier": "llm" } // llm | lite
     },
-    "targetLang": "zh-CN",
+    "targetLang": "auto",            // auto = 智能判断：原文主要是中文就译成英文，否则译成中文
     "deeplPlan": "free",             // free | pro
     "prompt": ""
   },

@@ -170,7 +170,13 @@ impl Providers {
     pub async fn translate(&self, cfg: &TranslateConfig, text: &str) -> Result<String> {
         // The engines below read the flat credential fields; scope them to the
         // selected engine first.
-        let scoped = scoped_translate(cfg);
+        let mut scoped = scoped_translate(cfg);
+        // `auto` is resolved against the text itself, so the "test connection"
+        // button (and any other caller) never hands a literal `auto` to an
+        // engine that would reject it.
+        if is_auto_target(&scoped.target_lang) {
+            scoped.target_lang = resolve_target(text, &scoped.target_lang);
+        }
         let cfg = &scoped;
         if let Some(url) = text_endpoint(&cfg.provider, cfg) {
             let params: Vec<(&str, String)> = vec![
@@ -2706,6 +2712,8 @@ mod tests {
     #[test]
     fn scoped_credentials_follow_the_active_vendor() {
         let mut cfg = TranslateConfig::default();
+        // Vendor slots only apply to the OpenAI-compatible channel.
+        cfg.provider = "openai".into();
         cfg.vendor = "deepseek".into();
         cfg.api_key = "stale-flat-key".into();
         cfg.profiles.insert(
