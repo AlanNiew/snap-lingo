@@ -24,6 +24,7 @@ pub mod pipeline;
 pub mod providers;
 pub mod state;
 pub mod tray;
+pub mod update;
 pub mod windows;
 
 use crate::state::AppState;
@@ -243,6 +244,44 @@ pub fn run() {
                 },
             );
 
+            // Quietly look for a newer release a few seconds after launch; the
+            // user hears about it only when there actually is one.
+            pipeline::spawn_delayed(
+                handle.clone(),
+                std::time::Duration::from_secs(9),
+                |app| {
+                    let state = app.state::<crate::state::AppState>();
+                    let config = state.config();
+                    if !config.update.enabled {
+                        return;
+                    }
+                    let repo = config.update.repo;
+                    tauri::async_runtime::spawn(async move {
+                        let info = crate::update::check(&repo, &crate::update::app_version(&app)).await;
+                        if let Some(error) = info.error {
+                            log::warn!("检查更新失败：{error}");
+                            return;
+                        }
+                        if info.has_update {
+                            log::info!(
+                                "发现新版本 {}（当前 {}），GitHub 仓库 {repo}",
+                                info.latest,
+                                info.current
+                            );
+                            pipeline::notify_update(
+                                &app,
+                                &format!(
+                                    "发现新版本 v{}（当前 v{}），点这里查看更新。",
+                                    info.latest, info.current
+                                ),
+                            );
+                        } else {
+                            log::info!("已是最新版本 {}", info.current);
+                        }
+                    });
+                },
+            );
+
             match hotkey::apply(&handle, &shortcut) {
                 Ok(()) => log::info!("全局快捷键已注册: {shortcut}"),
                 Err(err) => {
@@ -343,6 +382,10 @@ pub fn run() {
             commands::hide_toast,
             commands::open_logs,
             commands::open_external,
+            commands::check_update,
+            commands::download_update,
+            commands::install_update,
+            commands::open_update,
         ]);
 
     builder

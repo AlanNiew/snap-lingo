@@ -12,6 +12,7 @@ import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import type {
   AppConfig,
   ConnectionCheck,
+  DownloadedUpdate,
   Endpoints,
   HistoryItem,
   LogFile,
@@ -21,6 +22,7 @@ import type {
   SessionImage,
   StageEvent,
   TranslateConfig,
+  UpdateInfo,
 } from "./types";
 
 export interface MonitorInfo {
@@ -100,6 +102,10 @@ export const api = {
   hideSettings: () => invoke<void>("hide_settings"),
   hideToast: () => invoke<void>("hide_toast"),
   openLogs: () => invoke<void>("open_logs"),
+  openUpdate: () => invoke<void>("open_update"),
+  checkUpdate: () => invoke<UpdateInfo>("check_update"),
+  downloadUpdate: () => invoke<DownloadedUpdate>("download_update"),
+  installUpdate: (path: string) => invoke<void>("install_update", { path }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   revealConfigDir: () => invoke<void>("reveal_config_dir"),
   openGuide: () => invoke<void>("open_guide"),

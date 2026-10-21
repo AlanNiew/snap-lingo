@@ -1957,3 +1957,36 @@ body.notice-body {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ================================================================= update page */
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.update-notes {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.notice.notice-update {
+  border-left-color: var(--accent-strong);
+}
+
+.notice.notice-update .notice-mark {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}

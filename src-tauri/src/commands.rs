@@ -597,3 +597,46 @@ pub fn open_external(app: AppHandle, url: String) -> Result<(), String> {
         .open_url(url, None::<&str>)
         .map_err(|err| format!("打开链接失败：{err}"))
 }
+
+/// Ask GitHub for the newest release and compare it with this build.
+#[tauri::command]
+pub async fn check_update(app: AppHandle) -> crate::update::UpdateInfo {
+    let current = crate::update::app_version(&app);
+    let repo = app.state::<AppState>().config().update.repo;
+    crate::update::check(&repo, &current).await
+}
+
+/// Download the installer of the newest release into the temp directory.
+#[tauri::command]
+pub async fn download_update(app: AppHandle) -> Result<crate::update::Downloaded, String> {
+    let current = crate::update::app_version(&app);
+    let repo = app.state::<AppState>().config().update.repo;
+    crate::update::download(&repo, &current)
+        .await
+        .map_err(|err| format!("{err:#}"))
+}
+
+/// Run a downloaded installer: this process steps aside so the installer can
+/// replace the executable.
+#[tauri::command]
+pub async fn install_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    crate::update::install(std::path::Path::new(&path)).map_err(|err| format!("{err:#}"))?;
+    state.quitting.store(true, std::sync::atomic::Ordering::SeqCst);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        app.exit(0);
+    });
+    Ok(())
+}
+
+/// Open the settings window on the update page — the notice points here.
+#[tauri::command]
+pub fn open_update(app: AppHandle) {
+    windows::hide_toast(&app);
+    windows::show_settings(&app);
+    let _ = app.emit(crate::pipeline::NAVIGATE_EVENT, "update");
+}

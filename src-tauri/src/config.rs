@@ -387,6 +387,26 @@ impl Default for HistoryConfig {
     }
 }
 
+/// GitHub Releases based updates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct UpdateConfig {
+    /// Check once shortly after launch and tell the user when something newer
+    /// exists.
+    pub enabled: bool,
+    /// `owner/name` — the repository whose releases are polled.
+    pub repo: String,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            repo: crate::update::DEFAULT_REPO.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppConfig {
@@ -398,6 +418,8 @@ pub struct AppConfig {
     /// Launch on Windows login.
     pub startup: bool,
     pub history: HistoryConfig,
+    /// GitHub Releases based updater.
+    pub update: UpdateConfig,
 }
 
 impl Default for AppConfig {
@@ -410,6 +432,7 @@ impl Default for AppConfig {
             ui: UiConfig::default(),
             startup: false,
             history: HistoryConfig::default(),
+            update: UpdateConfig::default(),
         }
     }
 }
@@ -491,6 +514,9 @@ impl AppConfig {
             self.ui.theme = "system".into();
         }
         self.history.limit = self.history.limit.clamp(0, 1000);
+        // The updater polls one repository; anything unusable falls back to the
+        // built-in default so a typo cannot silently disable updates.
+        self.update.repo = crate::update::normalize_repo(&self.update.repo);
         self.ocr.vendor = vendor_id(&self.ocr.vendor);
         self.translate.vendor = vendor_id(&self.translate.vendor);
         // Vision settings from before per-vendor profiles were flat fields. Move

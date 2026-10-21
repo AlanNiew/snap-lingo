@@ -15,6 +15,7 @@ const ID_CANCEL: &str = "tray-cancel";
 const ID_SETTINGS: &str = "tray-settings";
 const ID_HISTORY: &str = "tray-history";
 const ID_LOGS: &str = "tray-logs";
+const ID_UPDATE: &str = "tray-update";
 const ID_AUTOSTART: &str = "tray-autostart";
 const ID_QUIT: &str = "tray-quit";
 
@@ -37,6 +38,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let history = MenuItem::with_id(app, ID_HISTORY, "历史记录…", true, None::<&str>)?;
     let logs = MenuItem::with_id(app, ID_LOGS, "查看日志…", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, ID_SETTINGS, "设置…", true, None::<&str>)?;
+    let update = MenuItem::with_id(app, ID_UPDATE, "检查更新…", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let startup = CheckMenuItem::with_id(
         app,
@@ -57,6 +59,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             &history,
             &logs,
             &settings,
+            &update,
             &sep1,
             &startup,
             &sep2,
@@ -151,6 +154,29 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
             let _ = app.emit(crate::pipeline::NAVIGATE_EVENT, "logs");
         }
         ID_SETTINGS => windows::show_settings(app),
+        ID_UPDATE => {
+            // Menu callbacks run on the main thread, so the HTTP work and the
+            // resulting notice are pushed onto the async runtime.
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let repo = app.state::<crate::state::AppState>().config().update.repo;
+                let info = crate::update::check(&repo, &crate::update::app_version(&app)).await;
+                if let Some(error) = info.error {
+                    pipeline::notify(&app, "error", &format!("检查更新失败：{error}"));
+                } else if info.has_update {
+                    pipeline::notify_update(
+                        &app,
+                        &format!("发现新版本 v{}（当前 v{}），点这里查看更新。", info.latest, info.current),
+                    );
+                } else {
+                    pipeline::notify(
+                        &app,
+                        "notice",
+                        &format!("已是最新版本 v{}。", info.current),
+                    );
+                }
+            });
+        }
         ID_AUTOSTART => {
             let target = !autostart_enabled(app);
             match set_autostart(app, target) {

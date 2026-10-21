@@ -17,6 +17,7 @@ import {
   EMPTY_PROFILE,
   type AppConfig,
   type ConnectionCheck,
+  type DownloadedUpdate,
   type EndpointInfo,
   type HistoryItem,
   type LogFile,
@@ -25,6 +26,7 @@ import {
   type ProviderPreset,
   type TranslateProfile,
   type TranslateProvider,
+  type UpdateInfo,
 } from "../lib/types";
 import { copyText, cx, formatClock, formatDuration, truncate } from "../lib/util";
 import { THEMES, THEME_LABEL_KEYS, THEME_SWATCHES } from "../lib/theme";
@@ -1451,6 +1453,201 @@ export function AboutSection({
 
       <Card title={t("aboutTagline")}>
         <div className="note">{t("aboutNote")}</div>
+      </Card>
+    </>
+  );
+}
+
+/* ================================================================== update */
+
+function formatSize(bytes: number): string {
+  if (!bytes) return "—";
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function UpdateSection({ config, patch }: Base) {
+  const { t } = useT();
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [downloaded, setDownloaded] = useState<DownloadedUpdate | null>(null);
+  const [busy, setBusy] = useState<"check" | "download" | "install" | null>(null);
+  const [error, setError] = useState("");
+
+  const setUpdate = (next: Partial<AppConfig["update"]>, immediate = false) =>
+    patch((cfg) => ({ ...cfg, update: { ...cfg.update, ...next } }), immediate);
+
+  const check = useCallback(async () => {
+    setBusy("check");
+    setError("");
+    setDownloaded(null);
+    try {
+      setInfo(await api.checkUpdate());
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  // Opening the page is an explicit "tell me" — check right away.
+  useEffect(() => {
+    void check();
+  }, [check]);
+
+  const download = async () => {
+    setBusy("download");
+    setError("");
+    try {
+      setDownloaded(await api.downloadUpdate());
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const install = async () => {
+    if (!downloaded) return;
+    setBusy("install");
+    try {
+      await api.installUpdate(downloaded.path);
+    } catch (err) {
+      setError(String(err));
+      setBusy(null);
+    }
+  };
+
+  const latest = info?.latest ? `v${info.latest}` : "—";
+  const hasUpdate = Boolean(info?.hasUpdate);
+  const statusText = info?.error
+    ? info.error
+    : busy === "check"
+      ? t("updateChecking")
+      : hasUpdate
+        ? t("updateAvailable", { v: info?.latest ?? "" })
+        : t("updateUpToDate");
+
+  return (
+    <>
+      <h1 className="page-title">{t("tabUpdate")}</h1>
+      <p className="page-lead">{t("updateLead")}</p>
+
+      <Card
+        title={t("updateCurrent")}
+        note={
+          info?.publishedAt
+            ? t("updatePublishedAt", { v: new Date(info.publishedAt).toLocaleString() })
+            : undefined
+        }
+        actions={
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => void check()}
+            disabled={busy !== null}
+          >
+            {busy === "check" ? <span className="spinner" aria-hidden="true" /> : null}
+            {t("updateCheck")}
+          </button>
+        }
+      >
+        <div className="stack">
+          <Row title={t("updateLatest")} hint={statusText}>
+            <span className={cx("badge", hasUpdate && "badge-accent")}>
+              {info ? (hasUpdate ? latest : `v${info.current}`) : "—"}
+            </span>
+          </Row>
+
+          {error ? <div className="note bad">{error}</div> : null}
+
+          {hasUpdate ? (
+            <div className="update-actions">
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => void download()}
+                disabled={busy !== null || !info?.assetUrl}
+              >
+                {busy === "download" ? <span className="spinner" aria-hidden="true" /> : null}
+                {busy === "download" ? t("updateDownloading") : t("updateDownload")}
+              </button>
+              {!info?.assetUrl ? (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => void api.openExternal(info?.pageUrl ?? "")}
+                >
+                  {t("updateOpenPage")}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {!info?.assetUrl && info && !info.error ? (
+            <div className="note warn">{t("updateNoAsset")}</div>
+          ) : null}
+
+          {downloaded ? (
+            <>
+              <div className="note ok">
+                {t("updateDownloaded", {
+                  name: downloaded.name,
+                  size: formatSize(downloaded.bytes),
+                })}
+              </div>
+              <div className="update-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => void install()}
+                  disabled={busy !== null}
+                >
+                  {t("updateInstall")}
+                </button>
+              </div>
+              <div className="note">{t("updateInstallHint")}</div>
+            </>
+          ) : null}
+
+          {info?.notes ? (
+            <div className="stack">
+              <div className="field-label">{t("updateNotes")}</div>
+              <pre className="update-notes">{truncate(info.notes, 1600)}</pre>
+            </div>
+          ) : null}
+
+          {info?.pageUrl ? (
+            <button
+              type="button"
+              className="link"
+              onClick={() => void api.openExternal(info.pageUrl)}
+            >
+              {t("updateOpenPage")} ↗
+            </button>
+          ) : null}
+        </div>
+      </Card>
+
+      <Card title={t("updateSourceTitle")}>
+        <div className="stack">
+          <Row title={t("updateAuto")} hint={t("updateAutoHint")}>
+            <Switch
+              checked={config.update.enabled}
+              onChange={(next) => setUpdate({ enabled: next }, true)}
+              title={t("updateAuto")}
+            />
+          </Row>
+          <Field label={t("updateRepo")} hint={t("updateRepoHint")}>
+            <TextInput
+              value={config.update.repo}
+              onChange={(value) => setUpdate({ repo: value })}
+              onBlur={() => setUpdate({ repo: config.update.repo }, true)}
+              placeholder="owner/name"
+              mono
+            />
+          </Field>
+          <div className="note">{t("updateVerifyNote")}</div>
+        </div>
       </Card>
     </>
   );

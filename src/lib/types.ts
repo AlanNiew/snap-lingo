@@ -115,6 +115,33 @@ export interface HistoryConfig {
   limit: number;
 }
 
+/** GitHub Releases based updater. */
+export interface UpdateConfig {
+  /** Check once a few seconds after launch. */
+  enabled: boolean;
+  /** `owner/name` of the repository whose releases are polled. */
+  repo: string;
+}
+
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  hasUpdate: boolean;
+  publishedAt: string;
+  notes: string;
+  pageUrl: string;
+  assetName: string;
+  assetUrl: string;
+  assetSize: number;
+  error?: string | null;
+}
+
+export interface DownloadedUpdate {
+  path: string;
+  name: string;
+  bytes: number;
+}
+
 export interface AppConfig {
   shortcut: string;
   ocr: OcrConfig;
@@ -123,6 +150,7 @@ export interface AppConfig {
   ui: UiConfig;
   startup: boolean;
   history: HistoryConfig;
+  update: UpdateConfig;
 }
 
 export type Stage = "idle" | "capturing" | "ocr" | "translate" | "done" | "error";

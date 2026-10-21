@@ -22,6 +22,7 @@ import {
   HistorySection,
   LogsSection,
   OcrSection,
+  UpdateSection,
   TranslateSection,
   type PatchFn,
 } from "./sections";
@@ -34,6 +35,7 @@ type TabId =
   | "appearance"
   | "history"
   | "logs"
+  | "update"
   | "about";
 
 const NAV: Array<{ id: TabId; key: StringKey }> = [
@@ -44,6 +46,7 @@ const NAV: Array<{ id: TabId; key: StringKey }> = [
   { id: "appearance", key: "tabAppearance" },
   { id: "history", key: "tabHistory" },
   { id: "logs", key: "tabLogs" },
+  { id: "update", key: "tabUpdate" },
   { id: "about", key: "tabAbout" },
 ];
 
@@ -60,6 +63,7 @@ const NAV_PATHS: Record<TabId, string> = {
     "M12 3a9 9 0 0 0 0 18h1.5a1.8 1.8 0 0 0 1.3-3l-.6-.7A1.5 1.5 0 0 1 15.3 15H17a4 4 0 0 0 4-4 8 8 0 0 0-9-8ZM8 9.5h.01M11 7.5h.01M14.5 8.5h.01M8.5 13h.01",
   history: "M12 7v5l3 2M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4",
   logs: "M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1ZM14 3v5h4M9 13h6M9 17h4",
+  update: "M12 16V4M7.5 8.5 12 4l4.5 4.5M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16",
   about: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM12 8h.01M11 12h1v5h1",
 };
 
@@ -245,6 +249,9 @@ export default function SettingsApp() {
       break;
     case "logs":
       page = <LogsSection {...base} />;
+      break;
+    case "update":
+      page = <UpdateSection {...base} />;
       break;
     case "about":
       page = <AboutSection config={config} monitors={monitors} />;

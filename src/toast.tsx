@@ -96,12 +96,14 @@ export function NoticeWindow() {
   useEffect(() => applyTheme(config?.ui.theme), [config?.ui.theme]);
 
   // Hide on its own after a few seconds; a new notice restarts the clock.
+  // Update notices linger longer: they are only useful if there is time to click.
   useEffect(() => {
     if (!notice) return;
     if (timer.current !== null) window.clearTimeout(timer.current);
+    const lifetime = notice.kind === "update" ? 14000 : LIFETIME;
     timer.current = window.setTimeout(() => {
       void api.hideToast().catch(() => undefined);
-    }, LIFETIME);
+    }, lifetime);
     return () => {
       if (timer.current !== null) window.clearTimeout(timer.current);
     };
@@ -120,22 +122,26 @@ export function NoticeWindow() {
   if (!notice) return <div className="notice notice-idle" />;
 
   const failed = notice.kind === "error";
+  const update = notice.kind === "update";
+  const hint = update ? tt("notifyUpdateHint") : tt("notifyHint");
 
   return (
     <button
       type="button"
-      className={`notice${failed ? " notice-error" : ""}`}
-      onClick={() => void api.openLogs().catch(() => undefined)}
+      className={`notice${failed ? " notice-error" : ""}${update ? " notice-update" : ""}`}
+      onClick={() =>
+        void (update ? api.openUpdate() : api.openLogs()).catch(() => undefined)
+      }
     >
       <span className="notice-mark" aria-hidden="true">
-        {failed ? "!" : "S"}
+        {failed ? "!" : update ? "↑" : "S"}
       </span>
       <span className="notice-body">
         <span className="notice-title">
-          SnapLingo · {failed ? tt("notifyError") : tt("notifyNotice")}
+          SnapLingo · {failed ? tt("notifyError") : update ? tt("notifyUpdate") : tt("notifyNotice")}
         </span>
         <span className="notice-text">{notice.message}</span>
-        <span className="notice-hint">{tt("notifyHint")}</span>
+        <span className="notice-hint">{hint}</span>
       </span>
     </button>
   );

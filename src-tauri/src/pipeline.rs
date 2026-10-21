@@ -808,6 +808,35 @@ pub fn notify(app: &AppHandle, kind: &str, message: &str) {
     });
 }
 
+/// Tell the user a newer release exists. Unlike [`notify`], this ignores the
+/// "notice card" switch: that setting is about error cards, and an update that
+/// nobody is told about is the same as no updater at all.
+pub fn notify_update(app: &AppHandle, message: &str) {
+    let message = message.trim();
+    let message = if message.chars().count() > 220 {
+        message.chars().take(219).collect::<String>() + "…"
+    } else {
+        message.to_string()
+    };
+    let notice = ("update".to_string(), message);
+
+    windows::show_toast(
+        app,
+        serde_json::json!({ "kind": &notice.0, "message": &notice.1 }),
+    );
+
+    let state = app.state::<AppState>();
+    *lock(&state.last_toast) = Some(notice.clone());
+
+    let handle = app.clone();
+    spawn_delayed(handle, std::time::Duration::from_secs(16), move |app| {
+        let state = app.state::<AppState>();
+        if lock(&state.last_toast).as_ref() == Some(&notice) {
+            windows::hide_toast(&app);
+        }
+    });
+}
+
 /// Re-run translation on the last recognised text, no re-selection needed.
 pub async fn retranslate(app: AppHandle) {
     let (source, crop, preview) = {
