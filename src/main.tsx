@@ -14,10 +14,12 @@ if (host) createRoot(host).render(<SettingsApp />);
 
 // The window is created hidden: a cold WebView2 shows a blank white sheet for a
 // second or two, and an undecorated white window looks like a hung app. Reveal
-// it once the first frame is actually on screen (two frames: one to lay out,
-// one to paint), with the Rust side keeping a watchdog in case this never runs.
-requestAnimationFrame(() =>
-  requestAnimationFrame(() => {
-    void api.uiReady().catch(() => undefined);
-  }),
-);
+// it once the first frame is on screen — two frames, one to lay out and one to
+// paint — but never wait on `requestAnimationFrame` alone: a hidden window can
+// have its frames throttled, and then the window would only appear through the
+// Rust-side watchdog. The timer covers that case.
+const reveal = () => {
+  void api.uiReady().catch(() => undefined);
+};
+requestAnimationFrame(() => requestAnimationFrame(reveal));
+window.setTimeout(reveal, 120);
