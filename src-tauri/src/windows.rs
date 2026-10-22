@@ -8,15 +8,21 @@
 //! exactly like the whole app freezing).
 
 use crate::capture::MonitorFrame;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    window::Color, AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 
 pub const SETTINGS: &str = "settings";
 pub const RESULT: &str = "result";
 pub const TOAST: &str = "toast";
 pub const OVERLAY_PREFIX: &str = "overlay-";
+
+/// Set once the settings page has painted at least once. Before that the window
+/// stays hidden, because a cold WebView2 shows a blank white sheet for a second
+/// or two — which on an undecorated window looks exactly like a hung app.
+static SETTINGS_PAINTED: AtomicBool = AtomicBool::new(false);
 
 /// Size and screen margin of the in-app notice (logical pixels at 100% DPI;
 /// the position is computed from the window's real physical size).
@@ -58,18 +64,50 @@ pub fn settings_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         // palette. Resizing is handled by invisible edges in the settings page.
         .decorations(false)
         .shadow(true)
+        // Hidden until the page reports its first paint (`ui_ready`), so the
+        // cold-start white sheet is never visible. `show_settings` keeps a
+        // watchdog that reveals it anyway if the page never answers.
+        .visible(false)
         .center()
         .build()
+        .map(|window| {
+            log::debug!("创建设置窗口（首次绘制前保持隐藏）");
+            window
+        })
 }
 
 pub fn show_settings(app: &AppHandle) {
     match settings_window(app) {
         Ok(window) => {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
+            if SETTINGS_PAINTED.load(Ordering::Relaxed) {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                return;
+            }
+            // First open: the page is still loading. Ask it to reveal itself as
+            // soon as it has something to paint, and keep a watchdog in case the
+            // frontend never reports back.
+            log::debug!("设置窗口等待首次绘制后再显示");
+            let handle = app.clone();
+            crate::pipeline::spawn_delayed(handle, std::time::Duration::from_millis(1500), |app| {
+                reveal_settings(&app)
+            });
         }
         Err(err) => log::error!("无法打开设置窗口: {err}"),
+    }
+}
+
+/// Show the settings window — called by the page once it has painted, and by the
+/// watchdog in `show_settings`.
+pub fn reveal_settings(app: &AppHandle) {
+    if !SETTINGS_PAINTED.swap(true, Ordering::Relaxed) {
+        log::info!("设置窗口首次绘制完成，显示窗口");
+    }
+    if let Some(window) = app.get_webview_window(SETTINGS) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
     }
 }
 
@@ -270,6 +308,10 @@ fn build_overlay(
     .decorations(false)
     .transparent(false)
     .shadow(false)
+    // Opaque black underneath the frozen frame: the capture watchdog may show
+    // this window a moment before the page has painted, and a black sheet reads
+    // as a dimmed screen while a white one reads as a hung app.
+    .background_color(Color(0, 0, 0, 255))
     .resizable(false)
     .maximizable(false)
     .minimizable(false)

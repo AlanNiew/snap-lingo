@@ -102,6 +102,9 @@ export const api = {
   /* shell */
   openSettings: () => invoke<void>("open_settings"),
   hideSettings: () => invoke<void>("hide_settings"),
+  // The settings window is created hidden; the page calls this once it has
+  // painted, so the cold-start white sheet is never shown.
+  uiReady: () => invoke<void>("ui_ready"),
   hideToast: () => invoke<void>("hide_toast"),
   openLogs: () => invoke<void>("open_logs"),
   openUpdate: () => invoke<void>("open_update"),

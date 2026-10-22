@@ -52,6 +52,21 @@ pub fn save_config(app: AppHandle, mut config: AppConfig) -> Result<AppConfig, S
     tray::sync_autostart_check(&app, config.startup);
     tray::refresh_tooltip(&app);
 
+    // First usable configuration: create the capture windows now, in the
+    // background, so the very first hotkey press does not pay for three cold
+    // webviews (which is what makes a fresh install feel slow).
+    if config.is_ocr_ready() && app.get_webview_window(crate::windows::RESULT).is_none() {
+        let handle = app.clone();
+        crate::pipeline::spawn_delayed(
+            handle,
+            std::time::Duration::from_millis(300),
+            |app| {
+                crate::windows::prewarm(&app);
+                crate::windows::prewarm_overlay(&app);
+            },
+        );
+    }
+
     let _ = app.emit(pipeline::CONFIG_EVENT, config.clone());
     Ok(config)
 }
@@ -581,6 +596,17 @@ pub fn open_logs(app: AppHandle) {
     windows::hide_toast(&app);
     windows::show_settings(&app);
     let _ = app.emit(crate::pipeline::NAVIGATE_EVENT, "logs");
+    // The settings window may still be loading (it is created hidden and only
+    // revealed after its first paint), in which case the event above had no
+    // listener yet. Repeat it once the page is certainly up.
+    let retry = app.clone();
+    crate::pipeline::spawn_delayed(
+        retry,
+        std::time::Duration::from_millis(1500),
+        |app| {
+            let _ = app.emit(crate::pipeline::NAVIGATE_EVENT, "logs");
+        },
+    );
 }
 
 #[tauri::command]
@@ -588,6 +614,14 @@ pub fn hide_settings(app: AppHandle) {
     if let Some(window) = app.get_webview_window(windows::SETTINGS) {
         let _ = window.hide();
     }
+}
+
+/// Called by every page once it has painted something real. Only the settings
+/// page uses it today: the window is created hidden so the user never sees the
+/// white sheet a cold WebView2 shows while the first frame is built.
+#[tauri::command]
+pub fn ui_ready(app: AppHandle) {
+    windows::reveal_settings(&app);
 }
 
 #[tauri::command]
@@ -750,4 +784,13 @@ pub fn open_update(app: AppHandle) {
     windows::hide_toast(&app);
     windows::show_settings(&app);
     let _ = app.emit(crate::pipeline::NAVIGATE_EVENT, "update");
+    // Same cold-start race as `open_logs`: repeat once the page has a listener.
+    let retry = app.clone();
+    crate::pipeline::spawn_delayed(
+        retry,
+        std::time::Duration::from_millis(1500),
+        |app| {
+            let _ = app.emit(crate::pipeline::NAVIGATE_EVENT, "update");
+        },
+    );
 }

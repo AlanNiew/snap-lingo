@@ -208,13 +208,27 @@ pub fn run() {
             tray::build(&handle)
                 .map_err(|err| -> Box<dyn std::error::Error> { format!("创建托盘图标失败：{err}").into() })?;
 
-            // Build the webviews the capture flow needs while nothing else is
-            // happening, so a later capture only has to show/hide them.
-            windows::prewarm(&handle);
+            // Build the webviews the capture flow needs, but stagger them: a cold
+            // install that spins up three WebView2 instances at once is exactly
+            // what makes the first window feel stalled. Skip it entirely while
+            // the app is still unconfigured — nothing can be captured yet.
             pipeline::spawn_delayed(
                 handle.clone(),
-                std::time::Duration::from_millis(1500),
+                std::time::Duration::from_millis(1200),
                 |app| {
+                    if app.state::<crate::state::AppState>().config().is_ocr_ready() {
+                        windows::prewarm(&app);
+                    }
+                },
+            );
+            pipeline::spawn_delayed(
+                handle.clone(),
+                std::time::Duration::from_millis(4000),
+                |app| {
+                    // Nothing to warm while the app is still unconfigured.
+                    if !app.state::<crate::state::AppState>().config().is_ocr_ready() {
+                        return;
+                    }
                     windows::prewarm_overlay(&app);
                     // Warm the capture path too: creating the first graphics
                     // session costs a few hundred milliseconds, and paying it
@@ -384,6 +398,7 @@ pub fn run() {
             commands::delete_history_item,
             commands::open_settings,
             commands::hide_settings,
+            commands::ui_ready,
             commands::hide_toast,
             commands::open_logs,
             commands::open_external,
