@@ -357,19 +357,25 @@ fn safe_file_name(name: &str) -> String {
     }
 }
 
-/// Launches the downloaded installer two seconds from now (so this process can
-/// exit and release the locked executable) and returns immediately.
+/// Launches the downloaded installer right away and returns; this process then
+/// exits a moment later (the callers do that on a 400ms timer) so the locked
+/// executable is free by the time the installer copies its files.
+///
+/// Flags: `/S` = silent (no wizard), `/UPDATE` = skip the WebView2 section, and
+/// `/R` = relaunch the app once the install has finished.
+///
+/// This used to run `cmd /C timeout /t 2 … & start "" …` instead: it needed a
+/// console (which our spawned child never has — `timeout` bails with
+/// "Input redirection is not supported") and its quoting broke into pieces
+/// once Rust's `\"` escaping met cmd's quote stripping — machines that were not
+/// this dev box saw Windows complain about a missing file called `\\`. CreateProcess
+/// on the installer itself has no such rapids to fall into.
 pub fn install(path: &Path) -> Result<()> {
     if !path.is_file() {
         bail!("安装包不存在：{}", path.display());
     }
-    let script = format!(
-        "timeout /t 2 /nobreak > nul & start \"\" \"{}\"",
-        path.display()
-    );
-    std::process::Command::new("cmd")
-        .arg("/C")
-        .arg(script)
+    std::process::Command::new(path)
+        .args(["/S", "/UPDATE", "/R"])
         .spawn()
         .context("无法启动安装程序")?;
     log::info!("已启动安装程序：{}，本进程即将退出", path.display());
