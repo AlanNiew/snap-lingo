@@ -624,6 +624,25 @@ pub fn ui_ready(app: AppHandle) {
     windows::reveal_settings(&app);
 }
 
+#[derive(serde::Serialize)]
+pub struct NoticePayload {
+    pub kind: String,
+    pub message: String,
+}
+
+/// The notice that is supposed to be on screen right now. A notice window that
+/// is created *by* the notification (cold start) loads a moment after the event
+/// was emitted, so it pulls the pending text instead of showing an empty card.
+#[tauri::command]
+pub fn current_toast(state: State<'_, AppState>) -> Option<NoticePayload> {
+    crate::state::lock(&state.last_toast)
+        .as_ref()
+        .map(|(kind, message)| NoticePayload {
+            kind: kind.clone(),
+            message: message.clone(),
+        })
+}
+
 #[tauri::command]
 pub fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt as _;

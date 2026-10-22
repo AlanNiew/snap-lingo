@@ -399,6 +399,7 @@ pub fn run() {
             commands::open_settings,
             commands::hide_settings,
             commands::ui_ready,
+            commands::current_toast,
             commands::hide_toast,
             commands::open_logs,
             commands::open_external,

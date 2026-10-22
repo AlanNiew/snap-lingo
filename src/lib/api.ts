@@ -105,6 +105,8 @@ export const api = {
   // The settings window is created hidden; the page calls this once it has
   // painted, so the cold-start white sheet is never shown.
   uiReady: () => invoke<void>("ui_ready"),
+  /** The notice that should be on screen (survives a cold start of the page). */
+  currentToast: () => invoke<Notice | null>("current_toast"),
   hideToast: () => invoke<void>("hide_toast"),
   openLogs: () => invoke<void>("open_logs"),
   openUpdate: () => invoke<void>("open_update"),

@@ -78,6 +78,14 @@ export function NoticeWindow() {
       } catch {
         /* defaults are fine */
       }
+      // The window is often created *by* the notification, so the event above
+      // was emitted before this page existed. Pull whatever should be showing.
+      try {
+        const pending = await api.currentToast();
+        if (alive && pending) setNotice((current) => current ?? pending);
+      } catch {
+        /* nothing pending */
+      }
     })();
 
     const pending = [onToast(setNotice)];
