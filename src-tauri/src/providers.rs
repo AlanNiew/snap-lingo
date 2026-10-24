@@ -1530,7 +1530,7 @@ pub fn mask_secret(value: &str) -> String {
 fn is_secret_query(key: &str) -> bool {
     matches!(
         key.to_ascii_lowercase().as_str(),
-        "key" | "api_key" | "apikey" | "access_token" | "token" | "sign" | "signature" | "q"
+        "key" | "api_key" | "apikey" | "access_token" | "token" | "sign" | "signature"
     )
 }
 
@@ -2683,10 +2683,15 @@ mod tests {
             "https://api.deepl.com/v2/translate"
         );
         // `sign` and `token` are the query credentials the guide names; an
-        // ordinary parameter keeps its value so a log line stays useful.
+        // ordinary parameter — including `q`, which is the text being translated
+        // — keeps its value so a log line stays useful.
         assert_eq!(
             scrub_url("https://x.test/?sign=abc&token=t&text=hi"),
             "https://x.test/?sign=***&token=***&text=hi"
+        );
+        assert_eq!(
+            scrub_url("https://x.test/translate?q=%E4%BD%A0%E5%A5%BD&key=k"),
+            "https://x.test/translate?q=%E4%BD%A0%E5%A5%BD&key=***"
         );
         // A display string that embeds the URL is scrubbed where it is embedded.
         let url = "https://api.example.test/v1?api_key=sk-live";
