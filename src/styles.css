@@ -1047,7 +1047,11 @@ body.result-body {
 .result {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* 100%, not 100vh: the card must be exactly the viewport, so the 1px frame
+     lands on the last row/column on all four sides. 100vh was measured against
+     the body's padding box and pushed the bottom edge (and its border) out of
+     the window. */
+  height: 100%;
   border: 1px solid var(--border);
   background: var(--surface);
   /* No radius and no shadow: the window itself is opaque and Windows draws the
@@ -1108,7 +1112,7 @@ body.result-body {
   color: #fff;
 }
 
-.result-body {
+.result-scroll {
   /* The scroller: `flex: 1` + `min-height: 0` lets it shrink so the footer is
      never pushed out of the window, however tall the content gets. */
   flex: 1;
@@ -1814,7 +1818,7 @@ summary:focus-visible,
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.result-body {
+.result-scroll {
   padding: 16px 16px 12px;
 }
 
@@ -1926,7 +1930,7 @@ body.notice-body {
   background: var(--danger);
 }
 
-.notice-body {
+.notice .notice-body {
   display: flex;
   flex-direction: column;
   gap: 4px;

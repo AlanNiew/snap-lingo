@@ -142,7 +142,7 @@ export function ResultWindow() {
       const el = root.current;
       if (!el) return;
       const head = el.querySelector<HTMLElement>(".result-head");
-      const body = el.querySelector<HTMLElement>(".result-body");
+      const body = el.querySelector<HTMLElement>(".result-scroll");
       const content = el.querySelector<HTMLElement>(".result-content");
       const foot = el.querySelector<HTMLElement>(".result-foot");
       // Measure the content box, never the scroll container (its scrollHeight is
@@ -313,7 +313,7 @@ export function ResultWindow() {
         </button>
       </header>
 
-      <div className="result-body">
+      <div className="result-scroll">
         <div className="result-content">
           {payload?.error && !busy ? <div className="result-error">{payload.error}</div> : null}
 
