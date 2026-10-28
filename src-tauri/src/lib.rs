@@ -42,11 +42,30 @@ pub const LOG_FILE_NAME: &str = "snaplingo.log";
 
 /* ------------------------------------------------------------------ logging */
 
+/// The open file, plus how many records went through it since the last
+/// existence check.
+struct LogSink {
+    file: Option<std::fs::File>,
+    writes: usize,
+}
+
 struct FileLogger {
-    /// Opened once at startup and shared by every thread. Opening, appending to
-    /// and closing the file for every record cost three system calls per line —
-    /// 30–60 of them per screenshot, all on the capture and worker threads.
-    file: std::sync::Mutex<std::fs::File>,
+    path: PathBuf,
+    /// Opened once and shared by every thread, instead of the old
+    /// open+append+close per record (three system calls per line, 30–60 lines
+    /// per screenshot, all on the capture and worker threads). The handle is
+    /// dropped and re-created when a write fails or the file disappears.
+    sink: std::sync::Mutex<LogSink>,
+}
+
+impl FileLogger {
+    fn open(&self) -> Option<std::fs::File> {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .ok()
+    }
 }
 
 impl log::Log for FileLogger {
@@ -58,22 +77,47 @@ impl log::Log for FileLogger {
         if !self.enabled(record.metadata()) {
             return;
         }
-        // Written under the lock so the lines of two threads never interleave.
-        if let Ok(mut file) = self.file.lock() {
-            let _ = writeln!(
-                file,
-                "[{}] {:<5} {}",
-                timestamp(),
-                record.level(),
-                record.args()
-            );
+        let Ok(mut sink) = self.sink.lock() else {
+            return;
+        };
+        // Lazy open: startup may find the file briefly locked by an indexer or
+        // antivirus, and losing the whole session's log to that would be worse
+        // than the old one-record loss.
+        if sink.file.is_none() {
+            sink.file = self.open();
+        }
+        // One formatted line, one unbuffered write: writeln! on a File issues a
+        // separate WriteFile per fragment, so a single write keeps the line
+        // together and halves the syscalls.
+        let line = format!(
+            "[{}] {:<5} {}\n",
+            timestamp(),
+            record.level(),
+            record.args()
+        );
+        let mut failed = false;
+        if let Some(file) = sink.file.as_mut() {
+            failed = file.write_all(line.as_bytes()).is_err();
+        }
+        if failed {
+            // Locked, deleted underneath us, disk full: drop the handle and let
+            // the next record try again rather than going silent for the rest
+            // of the session.
+            sink.file = None;
+            return;
+        }
+        sink.writes += 1;
+        // A held handle keeps writing to an unlinked file if the log is removed
+        // while the app runs (Explorer, or a second instance's startup
+        // rotation). Every few hundred lines, confirm the path still exists.
+        if sink.writes % 256 == 0 && std::fs::metadata(&self.path).is_err() {
+            sink.file = self.open();
         }
     }
 
     fn flush(&self) {
-        if let Ok(mut file) = self.file.lock() {
-            let _ = file.flush();
-        }
+        // Every record is already one unbuffered write, so there is nothing in
+        // a buffer to flush; the OS cache is the durability boundary we promise.
     }
 }
 
@@ -100,24 +144,22 @@ fn init_logging(dir: &Path) {
         let _ = std::fs::remove_file(&path);
     }
 
-    let file = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        Ok(file) => file,
-        Err(_) => return,
-    };
-
     let levels = if cfg!(debug_assertions) {
         log::LevelFilter::Debug
     } else {
         log::LevelFilter::Info
     };
 
-    // A GUI build has no console, so the only durable channel is the file.
+    // A GUI build has no console, so the only durable channel is the file. The
+    // logger is registered even if this first open fails: `log` re-opens lazily.
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .ok();
     let _ = log::set_boxed_logger(Box::new(FileLogger {
-        file: std::sync::Mutex::new(file),
+        path,
+        sink: std::sync::Mutex::new(LogSink { file, writes: 0 }),
     }));
     log::set_max_level(levels);
 }
