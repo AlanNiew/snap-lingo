@@ -43,7 +43,10 @@ pub const LOG_FILE_NAME: &str = "snaplingo.log";
 /* ------------------------------------------------------------------ logging */
 
 struct FileLogger {
-    path: PathBuf,
+    /// Opened once at startup and shared by every thread. Opening, appending to
+    /// and closing the file for every record cost three system calls per line —
+    /// 30–60 of them per screenshot, all on the capture and worker threads.
+    file: std::sync::Mutex<std::fs::File>,
 }
 
 impl log::Log for FileLogger {
@@ -55,22 +58,23 @@ impl log::Log for FileLogger {
         if !self.enabled(record.metadata()) {
             return;
         }
-        let line = format!(
-            "[{}] {:<5} {}\n",
-            timestamp(),
-            record.level(),
-            record.args()
-        );
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-        {
-            let _ = file.write_all(line.as_bytes());
+        // Written under the lock so the lines of two threads never interleave.
+        if let Ok(mut file) = self.file.lock() {
+            let _ = writeln!(
+                file,
+                "[{}] {:<5} {}",
+                timestamp(),
+                record.level(),
+                record.args()
+            );
         }
     }
 
-    fn flush(&self) {}
+    fn flush(&self) {
+        if let Ok(mut file) = self.file.lock() {
+            let _ = file.flush();
+        }
+    }
 }
 
 /// `YYYY-MM-DD HH:MM:SS` in the machine's own time zone: reading the log while
@@ -89,9 +93,21 @@ fn timestamp() -> String {
 
 fn init_logging(dir: &Path) {
     let path = dir.join(LOG_FILE_NAME);
+    // Rotation still happens only at startup: the handle is kept open for the
+    // process lifetime (see `FileLogger`), so a long-running instance can grow
+    // past the cap until the next launch trims it.
     if std::fs::metadata(&path).map(|m| m.len() > LOG_MAX_BYTES).unwrap_or(false) {
         let _ = std::fs::remove_file(&path);
     }
+
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(_) => return,
+    };
 
     let levels = if cfg!(debug_assertions) {
         log::LevelFilter::Debug
@@ -100,7 +116,9 @@ fn init_logging(dir: &Path) {
     };
 
     // A GUI build has no console, so the only durable channel is the file.
-    let _ = log::set_boxed_logger(Box::new(FileLogger { path }));
+    let _ = log::set_boxed_logger(Box::new(FileLogger {
+        file: std::sync::Mutex::new(file),
+    }));
     log::set_max_level(levels);
 }
 
