@@ -856,19 +856,17 @@ pub fn notify_update(app: &AppHandle, message: &str) {
 
 /// Re-run translation on the last recognised text, no re-selection needed.
 pub async fn retranslate(app: AppHandle) {
-    let (source, crop, preview) = {
+    let (source, crop) = {
         let state = app.state::<AppState>();
         let source = lock(&state.last_source).clone();
         let crop = lock(&state.last_crop).clone();
-        let preview = crop
-            .as_ref()
-            .and_then(|crop| imageops::to_preview_data_url(crop).ok());
-        (source, crop, preview)
+        (source, crop)
     };
 
     // Nothing was recognised last time (or nothing has run yet): replay the
     // whole job from the cached crop, so "重试" fixes OCR failures too and not
-    // just translation ones.
+    // just translation ones. That path re-encodes the preview inside the job,
+    // so don't encode one here just to throw it away.
     let Some(source) = source else {
         match crop {
             Some(crop) => {
@@ -880,6 +878,10 @@ pub async fn retranslate(app: AppHandle) {
         }
         return;
     };
+
+    let preview = crop
+        .as_ref()
+        .and_then(|crop| imageops::to_preview_data_url(crop).ok());
 
     let cfg = app.state::<AppState>().config();
     let providers = app.state::<AppState>().providers.clone();
