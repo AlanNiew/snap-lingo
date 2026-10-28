@@ -1302,7 +1302,17 @@ export function LogsSection({ notify }: Base) {
 
   const load = useCallback(async () => {
     try {
-      setFile(await api.readLog());
+      const next = await api.readLog();
+      // The auto-refresh timer fires every 2.5 s while this tab is open, and
+      // most ticks find the same tail. Keeping the previous object when path,
+      // size and content are unchanged avoids re-splitting and re-rendering up
+      // to 1200 lines (and the 256 KB IPC payload is still the cost, so the
+      // effect below also pauses while the window is hidden).
+      setFile((prev) =>
+        prev && prev.path === next.path && prev.bytes === next.bytes && prev.content === next.content
+          ? prev
+          : next,
+      );
     } catch (error) {
       notify(String(error), true);
     }
@@ -1314,7 +1324,11 @@ export function LogsSection({ notify }: Base) {
 
   useEffect(() => {
     if (!auto) return;
-    const timer = window.setInterval(() => void load(), 2500);
+    const timer = window.setInterval(() => {
+      // A minimised-to-tray or background window has nobody to show the log to;
+      // skipping keeps the 256 KB read and IPC transfer off the idle path.
+      if (document.visibilityState === "visible") void load();
+    }, 2500);
     return () => window.clearInterval(timer);
   }, [auto, load]);
 
