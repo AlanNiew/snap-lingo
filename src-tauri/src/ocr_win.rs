@@ -11,6 +11,7 @@
 use crate::imageops;
 use anyhow::{anyhow, Context, Result};
 use image::{Rgba, RgbaImage};
+use std::borrow::Cow;
 use windows::core::HSTRING;
 use windows::Globalization::Language;
 use windows::Graphics::Imaging::{BitmapPixelFormat, SoftwareBitmap};
@@ -183,7 +184,11 @@ fn to_software_bitmap(img: &RgbaImage) -> Result<SoftwareBitmap> {
 }
 
 /// Downscale when too large, pad with white when too small — never distort.
-fn fit_to_limits(img: &RgbaImage) -> Result<RgbaImage> {
+///
+/// Returns a borrowed frame in the common case (a selection already inside the
+/// engine's limits): the previous version cloned it, which cost another
+/// full-resolution RGBA copy before the BGRA conversion copied it again.
+fn fit_to_limits(img: &RgbaImage) -> Result<Cow<'_, RgbaImage>> {
     let max_edge = OcrEngine::MaxImageDimension().unwrap_or(FALLBACK_MAX_EDGE).min(16_384);
     let (w, h) = img.dimensions();
     if w == 0 || h == 0 {
@@ -191,16 +196,16 @@ fn fit_to_limits(img: &RgbaImage) -> Result<RgbaImage> {
     }
 
     let long = w.max(h);
-    let mut out = if long > max_edge {
+    let mut out: Cow<'_, RgbaImage> = if long > max_edge {
         let f = max_edge as f32 / long as f32;
-        image::imageops::resize(
+        Cow::Owned(image::imageops::resize(
             img,
             ((w as f32 * f).round() as u32).max(1),
             ((h as f32 * f).round() as u32).max(1),
             image::imageops::FilterType::CatmullRom,
-        )
+        ))
     } else {
-        img.clone()
+        Cow::Borrowed(img)
     };
 
     let (w, h) = out.dimensions();
@@ -208,8 +213,8 @@ fn fit_to_limits(img: &RgbaImage) -> Result<RgbaImage> {
         let pad_w = w.max(MIN_EDGE);
         let pad_h = h.max(MIN_EDGE);
         let mut padded = RgbaImage::from_pixel(pad_w, pad_h, Rgba([255, 255, 255, 255]));
-        image::imageops::overlay(&mut padded, &out, 0, 0);
-        out = padded;
+        image::imageops::overlay(&mut padded, &*out, 0, 0);
+        out = Cow::Owned(padded);
     }
     Ok(out)
 }

@@ -703,7 +703,7 @@ pub async fn start_update_download(
     let worker = app.clone();
     tauri::async_runtime::spawn(async move {
         let reporter = worker.clone();
-        let result = crate::update::download(&repo, &version, &mirror, move |progress| {
+        let result = crate::update::download(&worker, &repo, &version, &mirror, move |progress| {
             let snapshot = {
                 let state = reporter.state::<AppState>();
                 let mut slot = crate::state::lock(&state.update);
@@ -731,7 +731,7 @@ pub async fn start_update_download(
                 };
                 emit_update(&worker, snapshot);
                 log::info!("更新包已下载完成，即将启动安装程序");
-                match crate::update::install(std::path::Path::new(&done.path)) {
+                match crate::update::install(&worker, std::path::Path::new(&done.path)) {
                     Ok(()) => {
                         let state = worker.state::<AppState>();
                         state.quitting.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -776,19 +776,20 @@ pub async fn start_update_download(
 /// An installer a previous click already downloaded, so the UI can offer
 /// "install" instead of pulling it again.
 #[tauri::command]
-pub fn cached_update(asset_name: String) -> Option<crate::update::Downloaded> {
-    crate::update::cached(&asset_name)
+pub fn cached_update(app: AppHandle, asset_name: String) -> Option<crate::update::Downloaded> {
+    crate::update::cached(&app, &asset_name)
 }
 
 /// Run a downloaded installer: this process steps aside so the installer can
-/// replace the executable.
+/// replace the executable. `update::install` re-checks that the path really is
+/// an installer this app downloaded before executing anything.
 #[tauri::command]
 pub async fn install_update(
     app: AppHandle,
     state: State<'_, AppState>,
     path: String,
 ) -> Result<(), String> {
-    crate::update::install(std::path::Path::new(&path)).map_err(|err| format!("{err:#}"))?;
+    crate::update::install(&app, std::path::Path::new(&path)).map_err(|err| format!("{err:#}"))?;
     state.quitting.store(true, std::sync::atomic::Ordering::SeqCst);
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;

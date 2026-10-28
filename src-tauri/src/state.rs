@@ -12,7 +12,7 @@ use image::RgbaImage;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 /// Lock without the poisoning dance: a panic elsewhere must not take the app
@@ -100,7 +100,9 @@ pub struct AppState {
     pub last_result: Mutex<Option<ResultPayload>>,
     /// Kept so "重新翻译" can retry without asking the user to select again.
     pub last_source: Mutex<Option<String>>,
-    pub last_crop: Mutex<Option<RgbaImage>>,
+    /// Shared, not owned: the job, the retry path and the cached preview all
+    /// need the same crop, and a 1440p frame is 14.7 MB per clone.
+    pub last_crop: Mutex<Option<Arc<RgbaImage>>>,
     pub history: Mutex<Vec<HistoryItem>>,
     pub history_path: PathBuf,
     /// The notice currently on screen (`kind`, `message`), so the auto-hide
@@ -243,7 +245,7 @@ mod tests {
     use super::*;
     use image::Rgba;
 
-    fn entry(preview: (u32, u32), frame: (u32, u32)) -> SessionEntry {
+    fn entry(frame: (u32, u32)) -> SessionEntry {
         SessionEntry {
             frame: MonitorFrame {
                 id: 1,
@@ -266,7 +268,7 @@ mod tests {
     #[test]
     fn rect_is_taken_as_frame_pixels() {
         let session = CaptureSession {
-            entries: vec![entry((1280, 720), (2560, 1440))],
+            entries: vec![entry((2560, 1440))],
             started: Instant::now(),
         };
         let e = session.entry(1).unwrap();
@@ -281,7 +283,7 @@ mod tests {
     #[test]
     fn rect_is_clamped_to_the_frame() {
         let session = CaptureSession {
-            entries: vec![entry((800, 600), (800, 600))],
+            entries: vec![entry((800, 600))],
             started: Instant::now(),
         };
         let e = session.entry(1).unwrap();

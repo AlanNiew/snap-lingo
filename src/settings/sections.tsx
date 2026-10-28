@@ -143,21 +143,35 @@ function EndpointHint({ config, kind }: { config: AppConfig; kind: "ocr" | "tran
   const { t } = useT();
   const [info, setInfo] = useState<EndpointInfo | null>(null);
 
+  // Only the channel's own settings decide the request, so unrelated edits
+  // (theme, hotkey, capture options) must not re-send the whole config over IPC
+  // — this used to fire once per keystroke anywhere in the form. The debounce
+  // collapses the remaining keystrokes into one request once typing pauses.
+  const relevant = useMemo(
+    () => JSON.stringify(kind === "ocr" ? config.ocr : config.translate),
+    [config, kind],
+  );
+
   useEffect(() => {
     let alive = true;
-    api
-      .describeEndpoints(config)
-      .then((all) => {
-        if (!alive) return;
-        setInfo(kind === "ocr" ? all.ocr : kind === "translate" ? all.translate : all.picture);
-      })
-      .catch(() => {
-        if (alive) setInfo(null);
-      });
+    const timer = window.setTimeout(() => {
+      api
+        .describeEndpoints(config)
+        .then((all) => {
+          if (!alive) return;
+          setInfo(kind === "ocr" ? all.ocr : kind === "translate" ? all.translate : all.picture);
+        })
+        .catch(() => {
+          if (alive) setInfo(null);
+        });
+    }, 250);
     return () => {
       alive = false;
+      window.clearTimeout(timer);
     };
-  }, [config, kind]);
+    // `relevant` is the debounce key; `config` is read inside for the payload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [relevant, kind]);
 
   if (!info || !info.url) return null;
   return (
@@ -1091,6 +1105,11 @@ export function HistorySection({
 }: Base & { history: HistoryItem[]; reloadHistory: () => void }) {
   const { t } = useT();
   const [query, setQuery] = useState("");
+  // Render in pages: with the limit at 500 the tab otherwise mounts every row
+  // (each with its own buttons and text nodes) in one commit, which is visible
+  // as a stutter when switching to this tab.
+  const PAGE = 100;
+  const [visible, setVisible] = useState(PAGE);
   const setHistory = (next: Partial<AppConfig["history"]>, immediate = false) =>
     patch((cfg) => ({ ...cfg, history: { ...cfg.history, ...next } }), immediate);
 
@@ -1108,6 +1127,11 @@ export function HistorySection({
         : history,
     [history, needle],
   );
+
+  // A new search starts from the first page; incoming captures don't reset it.
+  useEffect(() => {
+    setVisible(PAGE);
+  }, [needle]);
 
   const copy = async (item: HistoryItem) => {
     const ok = await copyText(item.translatedText || item.sourceText);
@@ -1176,25 +1200,34 @@ export function HistorySection({
                 <div style={{ fontWeight: 500, color: "var(--text-soft)" }}>{t("historyNoMatch")}</div>
               </div>
             ) : (
-              shown.map((item) => (
-                <div className="history-item" key={item.id}>
-                  <div className="history-text">
-                    <div className="history-src">{item.sourceText}</div>
-                    {item.translatedText ? <div className="history-dst">{item.translatedText}</div> : null}
-                  </div>
-                  <div className="history-meta">
-                    <span className="badge">{formatClock(item.createdAt)}</span>
-                    <div className="history-actions">
-                      <button className="btn btn-sm btn-ghost" onClick={() => copy(item)}>
-                        {t("copy")}
-                      </button>
-                      <button className="btn btn-sm btn-ghost" onClick={() => remove(item.id)}>
-                        ✕
-                      </button>
+              <>
+                {shown.slice(0, visible).map((item) => (
+                  <div className="history-item" key={item.id}>
+                    <div className="history-text">
+                      <div className="history-src">{item.sourceText}</div>
+                      {item.translatedText ? <div className="history-dst">{item.translatedText}</div> : null}
+                    </div>
+                    <div className="history-meta">
+                      <span className="badge">{formatClock(item.createdAt)}</span>
+                      <div className="history-actions">
+                        <button className="btn btn-sm btn-ghost" onClick={() => copy(item)}>
+                          {t("copy")}
+                        </button>
+                        <button className="btn btn-sm btn-ghost" onClick={() => remove(item.id)}>
+                          ✕
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                ))}
+                {shown.length > visible ? (
+                  <div className="history-more">
+                    <button className="btn btn-sm btn-ghost" onClick={() => setVisible((n) => n + PAGE)}>
+                      {t("historyShowMore", { count: Math.min(PAGE, shown.length - visible) })}
+                    </button>
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
         )}
@@ -1269,7 +1302,17 @@ export function LogsSection({ notify }: Base) {
 
   const load = useCallback(async () => {
     try {
-      setFile(await api.readLog());
+      const next = await api.readLog();
+      // The auto-refresh timer fires every 2.5 s while this tab is open, and
+      // most ticks find the same tail. Keeping the previous object when path,
+      // size and content are unchanged avoids re-splitting and re-rendering up
+      // to 1200 lines (and the 256 KB IPC payload is still the cost, so the
+      // effect below also pauses while the window is hidden).
+      setFile((prev) =>
+        prev && prev.path === next.path && prev.bytes === next.bytes && prev.content === next.content
+          ? prev
+          : next,
+      );
     } catch (error) {
       notify(String(error), true);
     }
@@ -1281,7 +1324,11 @@ export function LogsSection({ notify }: Base) {
 
   useEffect(() => {
     if (!auto) return;
-    const timer = window.setInterval(() => void load(), 2500);
+    const timer = window.setInterval(() => {
+      // A minimised-to-tray or background window has nobody to show the log to;
+      // skipping keeps the 256 KB read and IPC transfer off the idle path.
+      if (document.visibilityState === "visible") void load();
+    }, 2500);
     return () => window.clearInterval(timer);
   }, [auto, load]);
 

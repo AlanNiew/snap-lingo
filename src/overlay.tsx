@@ -47,6 +47,16 @@ export function Overlay() {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const shot = useRef<SessionImage | null>(null);
+  const shotRef = useRef<HTMLImageElement | null>(null);
+  // Reveal happens once per frame: the first paint that can show the frozen
+  // desktop is what ends the black sheet, so a slow image must not un-hide the
+  // window early and a repeated event must not ask twice.
+  const revealed = useRef(false);
+  // Pointer moves are coalesced to one state update per animation frame. Each
+  // move repaints a full-screen, colour-sampled layer, and the events arrive
+  // faster than the compositor consumes them.
+  const pending = useRef<Point | null>(null);
+  const raf = useRef<number | null>(null);
 
   const tt = useCallback(
     (key: StringKey, vars?: Record<string, string | number>) => translate(lang, key, vars),
@@ -62,6 +72,12 @@ export function Overlay() {
 
   const reset = useCallback(() => {
     shot.current = null;
+    revealed.current = false;
+    if (raf.current !== null) {
+      cancelAnimationFrame(raf.current);
+      raf.current = null;
+    }
+    pending.current = null;
     setFrame(null);
     setAnchor(null);
     setPointer(null);
@@ -69,6 +85,17 @@ export function Overlay() {
     setBusy(false);
     setFailure(null);
   }, []);
+
+  const reveal = useCallback(() => {
+    if (monitorId === null || revealed.current) return;
+    revealed.current = true;
+    // One paint later: `overlayReady` is what un-hides the window, and asking
+    // for it in the same commit as the <img> update let a frame of the empty
+    // black layer reach the screen before the frozen desktop did.
+    requestAnimationFrame(() => {
+      void api.overlayReady(monitorId).catch(() => undefined);
+    });
+  }, [monitorId]);
 
   const load = useCallback(async () => {
     if (monitorId === null) return;
@@ -80,9 +107,9 @@ export function Overlay() {
     }
     shot.current = image;
     setFrame(image);
-    // Rust keeps the window hidden until the frozen frame is painted, so the
-    // user never sees a black flash before the desktop appears.
-    await api.overlayReady(monitorId);
+    // `reveal` runs from the image's load hook (or the effect below when the
+    // frame is already decoded), not here: Rust keeps the window hidden until
+    // the frozen frame can actually be painted.
   }, [cancel, monitorId]);
 
   useEffect(() => {
@@ -165,6 +192,27 @@ export function Overlay() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [cancel]);
 
+  // A warm window can be handed a frame that is already decoded (cached data
+  // URL, or the browser got there before the effect ran), in which case
+  // `onLoad` never fires and the layer would stay hidden until the watchdog.
+  useEffect(() => {
+    if (!frame) return;
+    const img = shotRef.current;
+    if (!img || revealed.current) return;
+    if (img.complete && img.naturalWidth > 0) {
+      const decoded = img.decode ? img.decode() : Promise.resolve();
+      void decoded.then(reveal, reveal);
+    }
+  }, [frame, reveal]);
+
+  // Drop a queued pointer frame if the layer unmounts mid-drag.
+  useEffect(
+    () => () => {
+      if (raf.current !== null) cancelAnimationFrame(raf.current);
+    },
+    [],
+  );
+
   /* ---------------------------------------------------------------- selection */
 
   const box = anchor && pointer ? boxBetween(anchor, pointer) : null;
@@ -178,12 +226,32 @@ export function Overlay() {
 
   const onMouseMove = (event: ReactMouseEvent) => {
     if (!dragging) return;
-    setPointer({ x: event.clientX, y: event.clientY });
+    pending.current = { x: event.clientX, y: event.clientY };
+    if (raf.current !== null) return;
+    raf.current = requestAnimationFrame(() => {
+      raf.current = null;
+      if (pending.current) setPointer(pending.current);
+    });
   };
 
-  const onMouseUp = () => {
-    if (!dragging || !box) return;
+  const onMouseUp = (event: ReactMouseEvent) => {
+    if (!dragging) return;
+    if (raf.current !== null) {
+      cancelAnimationFrame(raf.current);
+      raf.current = null;
+    }
+    // The coalesced pointer state can lag the physical cursor by a frame, so
+    // commit the release position itself instead of reading `box` from state.
+    const end = { x: event.clientX, y: event.clientY };
+    pending.current = null;
+    setPointer(end);
     setDragging(false);
+
+    const finalBox = anchor ? boxBetween(anchor, end) : null;
+    if (!finalBox) {
+      cancel();
+      return;
+    }
 
     const image = shot.current;
     if (!image || monitorId === null) {
@@ -197,10 +265,10 @@ export function Overlay() {
     const scale = image.width / Math.max(1, window.innerWidth);
     const rect = {
       monitorId,
-      x: Math.round(box.x * scale),
-      y: Math.round(box.y * scale),
-      width: Math.round(box.width * scale),
-      height: Math.round(box.height * scale),
+      x: Math.round(finalBox.x * scale),
+      y: Math.round(finalBox.y * scale),
+      width: Math.round(finalBox.width * scale),
+      height: Math.round(finalBox.height * scale),
     };
 
     if (rect.width < MIN_PHYSICAL || rect.height < MIN_PHYSICAL) {
@@ -237,7 +305,15 @@ export function Overlay() {
       }}
     >
       {frame ? (
-        <img className="overlay-shot" src={frame.dataUrl} alt="" draggable={false} />
+        <img
+          ref={shotRef}
+          className="overlay-shot"
+          src={frame.dataUrl}
+          alt=""
+          draggable={false}
+          decoding="sync"
+          onLoad={reveal}
+        />
       ) : null}
 
       {box ? (

@@ -59,12 +59,26 @@ pub fn prepare_for_ocr(img: &RgbaImage, cfg: &CaptureConfig) -> RgbaImage {
     image::imageops::resize(img, nw, nh, filter)
 }
 
+/// `data:<mime>;base64,<payload>` built in one buffer.
+///
+/// `format!` + `Engine::encode` allocates the whole base64 body as a `Vec` and
+/// then copies it into the formatted string: on a 1440p screenshot that is a
+/// 9 MB text buffer created only to be memcpy'd once. `encode_string` appends
+/// into the target's spare capacity instead.
+fn data_url(mime: &str, bytes: &[u8]) -> String {
+    const TAIL: &str = ";base64,";
+    let body = (bytes.len() + 2) / 3 * 4;
+    let mut out = String::with_capacity(5 + mime.len() + TAIL.len() + body);
+    out.push_str("data:");
+    out.push_str(mime);
+    out.push_str(TAIL);
+    B64.encode_string(bytes, &mut out);
+    out
+}
+
 /// PNG data URL. Lossless, so thin glyphs survive; the OCR path prefers this.
 pub fn to_png_data_url(img: &RgbaImage) -> anyhow::Result<String> {
-    Ok(format!(
-        "data:image/png;base64,{}",
-        B64.encode(to_png_bytes(img)?)
-    ))
+    Ok(data_url("image/png", &to_png_bytes(img)?))
 }
 
 /// Raw PNG bytes — what local OCR services expect as base64 input.
@@ -77,27 +91,36 @@ pub fn to_png_bytes(img: &RgbaImage) -> anyhow::Result<Vec<u8>> {
 
 /// JPEG data URL, for previews and for pathological PNG sizes.
 pub fn to_jpeg_data_url(img: &RgbaImage, quality: u8) -> anyhow::Result<String> {
-    Ok(format!(
-        "data:image/jpeg;base64,{}",
-        B64.encode(to_jpeg_bytes(img, quality)?)
-    ))
+    Ok(data_url("image/jpeg", &to_jpeg_bytes(img, quality)?))
 }
 
 /// Raw JPEG bytes — what the one-step picture translators want to receive.
 pub fn to_jpeg_bytes(img: &RgbaImage, quality: u8) -> anyhow::Result<Vec<u8>> {
     let (w, h) = img.dimensions();
-    let rgb = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();
-    let mut buf = Vec::with_capacity((w * h) as usize / 4 + 1024);
+    // JPEG has no alpha channel, so all that is needed is the RGB triples. Pack
+    // them straight out of the RGBA source rather than wrapping the frame in a
+    // DynamicImage clone first: that clone is a full-frame copy (14.7 MB for a
+    // 1440p screen) on a path that runs for every picture translation.
+    let mut rgb = vec![0u8; (w as usize) * (h as usize) * 3];
+    for (dst, src) in rgb.chunks_exact_mut(3).zip(img.as_raw().chunks_exact(4)) {
+        dst.copy_from_slice(&src[..3]);
+    }
+    let mut buf = Vec::with_capacity(rgb.len() / 8 + 1024);
     JpegEncoder::new_with_quality(&mut buf, quality)
-        .write_image(rgb.as_raw(), w, h, ExtendedColorType::Rgb8)?;
+        .write_image(rgb.as_slice(), w, h, ExtendedColorType::Rgb8)?;
     Ok(buf)
 }
 
 /// Encoder chosen for the OCR request: PNG when it stays reasonable, else JPEG.
 pub fn encode_for_ocr(img: &RgbaImage, cfg: &CaptureConfig) -> anyhow::Result<String> {
-    let png = to_png_data_url(img)?;
-    if png.len() <= PNG_SOFT_LIMIT {
-        return Ok(png);
+    let png = to_png_bytes(img)?;
+    // The limit is about what goes over the wire, and the data URL adds a
+    // 22-byte prefix on top of the base64 expansion. Measure that
+    // arithmetically so the fallback path never pays for a 9 MB base64 encode
+    // it immediately throws away.
+    let as_url = (png.len() + 2) / 3 * 4 + "data:image/png;base64,".len();
+    if as_url <= PNG_SOFT_LIMIT {
+        return Ok(data_url("image/png", &png));
     }
     log::debug!("png payload is {} bytes; falling back to jpeg", png.len());
     to_jpeg_data_url(img, cfg.jpeg_quality)
@@ -145,17 +168,26 @@ pub fn to_preview_data_url(img: &RgbaImage) -> anyhow::Result<String> {
 
 /// Flatten RGBA onto an opaque background. Needed by the Windows OCR engine,
 /// which ignores alpha and would otherwise read transparent pixels as black.
+///
+/// Written as one predicated pass over a pre-sized buffer: `extend_from_slice`
+/// per pixel reallocated its way through five million pixels on a full screen,
+/// and the opaque path — every screenshot — avoids the alpha blend entirely.
 pub fn flattened_bgra(img: &RgbaImage) -> Vec<u8> {
     let (w, h) = img.dimensions();
-    let mut out = Vec::with_capacity((w * h * 4) as usize);
-    for px in img.pixels() {
-        let [r, g, b, a] = px.0;
+    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    for (dst, src) in out.chunks_exact_mut(4).zip(img.as_raw().chunks_exact(4)) {
+        let (r, g, b, a) = (src[0], src[1], src[2], src[3]);
+        dst[3] = 255;
         if a == 255 {
-            out.extend_from_slice(&[b, g, r, 255]);
+            dst[0] = b;
+            dst[1] = g;
+            dst[2] = r;
         } else {
             let af = a as u32;
             let blend = |c: u8| (((c as u32 * af) + (255 * (255 - af))) / 255) as u8;
-            out.extend_from_slice(&[blend(b), blend(g), blend(r), 255]);
+            dst[0] = blend(b);
+            dst[1] = blend(g);
+            dst[2] = blend(r);
         }
     }
     out
@@ -213,5 +245,48 @@ mod tests {
         let bytes = flattened_bgra(&img);
         assert_eq!(bytes.len(), 16);
         assert_eq!(&bytes[0..3], &[255, 255, 255], "transparent → white");
+    }
+
+    #[test]
+    fn data_url_matches_the_engine_encoding() {
+        // The one-buffer builder must produce byte-identical output to the
+        // `format!` + `Engine::encode` pair it replaced.
+        let bytes = b"hello world";
+        assert_eq!(
+            data_url("text/plain", bytes),
+            format!("data:text/plain;base64,{}", B64.encode(bytes))
+        );
+    }
+
+    #[test]
+    fn png_upload_length_matches_the_real_data_url() {
+        // `encode_for_ocr` decides the JPEG fallback from the raw PNG length, so
+        // the arithmetic there has to equal the length of the string it would
+        // have produced. Pinned against real encodings at a range of sizes.
+        let prefix = "data:image/png;base64,";
+        assert_eq!(prefix.len(), 22);
+        for (w, h) in [(1u32, 1u32), (16, 9), (97, 53), (640, 360), (1440, 900)] {
+            let png = to_png_bytes(&checker(w, h)).unwrap();
+            let predicted = (png.len() + 2) / 3 * 4 + prefix.len();
+            assert_eq!(predicted, data_url("image/png", &png).len(), "{w}×{h}");
+        }
+    }
+
+    #[test]
+    fn encode_for_ocr_falls_back_to_jpeg_when_the_png_is_too_big() {
+        // White noise compresses badly: 900×900 of it lands over the 3.5 MB
+        // soft limit, so the JPEG fallback must fire instead of shipping a huge
+        // base64 body to the vision model.
+        fn mix(mut v: u64) -> u64 {
+            v = (v ^ (v >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            v = (v ^ (v >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            v ^ (v >> 31)
+        }
+        let img = RgbaImage::from_fn(900, 900, |x, y| {
+            let n = mix(u64::from(y) * 900 + u64::from(x));
+            Rgba([n as u8, (n >> 8) as u8, (n >> 16) as u8, 255])
+        });
+        let url = encode_for_ocr(&img, &CaptureConfig::default()).unwrap();
+        assert!(url.starts_with("data:image/jpeg;base64,"), "expected jpeg fallback");
     }
 }

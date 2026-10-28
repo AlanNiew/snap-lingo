@@ -769,6 +769,13 @@ textarea {
   max-width: 340px;
 }
 
+.history-more {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 2px;
+  border-top: 1px solid var(--border);
+}
+
 .history-item {
   display: flex;
   gap: 10px;
@@ -996,7 +1003,10 @@ body.overlay-body {
   color: #eef1f6;
   font-size: 12.5px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(8px);
+  /* No backdrop-filter here: it sits on top of a full-screen, colour-sampled
+     layer mid-drag, where a blur forces a backbuffer read on every pointer
+     move. The bar is pushed to the bottom edge and shown at rest, so the blur
+     only ever bought a slightly softer edge. */
   pointer-events: none;
 }
 
@@ -1037,7 +1047,11 @@ body.result-body {
 .result {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* 100%, not 100vh: the card must be exactly the viewport, so the 1px frame
+     lands on the last row/column on all four sides. 100vh was measured against
+     the body's padding box and pushed the bottom edge (and its border) out of
+     the window. */
+  height: 100%;
   border: 1px solid var(--border);
   background: var(--surface);
   /* No radius and no shadow: the window itself is opaque and Windows draws the
@@ -1098,7 +1112,7 @@ body.result-body {
   color: #fff;
 }
 
-.result-body {
+.result-scroll {
   /* The scroller: `flex: 1` + `min-height: 0` lets it shrink so the footer is
      never pushed out of the window, however tall the content gets. */
   flex: 1;
@@ -1107,7 +1121,9 @@ body.result-body {
   /* Reserve the scrollbar track unconditionally: when it appears mid-resize the
      text re-wraps, which used to feed the auto-fit loop and could hang the app. */
   scrollbar-gutter: stable;
-  padding: 14px 14px 10px;
+  /* Padding is declared once, in the result-window block further down
+     (16px 16px 12px). Auto-fit reads it back from getComputedStyle, so a second
+     value here would only mislead the next reader. */
 }
 
 /* Plain wrapper for the result content: its height is the natural content
@@ -1804,7 +1820,7 @@ summary:focus-visible,
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.result-body {
+.result-scroll {
   padding: 16px 16px 12px;
 }
 
@@ -1916,7 +1932,7 @@ body.notice-body {
   background: var(--danger);
 }
 
-.notice-body {
+.notice .notice-body {
   display: flex;
   flex-direction: column;
   gap: 4px;

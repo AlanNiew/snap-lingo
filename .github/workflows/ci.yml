@@ -1,0 +1,48 @@
+name: CI
+
+# Every check the project relies on, on the platform the UI ships to:
+# the TS build (which also type-checks), the Rust test suite (including the
+# IPC-surface parity test in src-tauri/tests/contract.rs), and the release
+# profile cargo check. Until this existed nothing ran automatically, which is
+# how a drifted command name could reach a release unnoticed.
+
+on:
+  # Every branch, not just main: a feature branch should be guarded before the
+  # PR exists, and `perf/*` / `fix/*` are exactly where the drift happens.
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 前端类型检查与构建
+        run: npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Rust 测试（含 IPC 契约对拍）
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Rust 全目标检查（含测试与示例）
+        working-directory: src-tauri
+        run: cargo check --locked --all-targets
