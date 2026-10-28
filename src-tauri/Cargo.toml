@@ -1,6 +1,6 @@
 [package]
 name = "snap-lingo"
-version = "1.0.4"
+version = "1.0.5"
 description = "SnapLingo - 轻量级截图 OCR 翻译工具"
 authors = ["SnapLingo"]
 edition = "2021"
