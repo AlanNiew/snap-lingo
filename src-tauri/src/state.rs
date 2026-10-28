@@ -243,7 +243,7 @@ mod tests {
     use super::*;
     use image::Rgba;
 
-    fn entry(preview: (u32, u32), frame: (u32, u32)) -> SessionEntry {
+    fn entry(frame: (u32, u32)) -> SessionEntry {
         SessionEntry {
             frame: MonitorFrame {
                 id: 1,
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn rect_is_taken_as_frame_pixels() {
         let session = CaptureSession {
-            entries: vec![entry((1280, 720), (2560, 1440))],
+            entries: vec![entry((2560, 1440))],
             started: Instant::now(),
         };
         let e = session.entry(1).unwrap();
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn rect_is_clamped_to_the_frame() {
         let session = CaptureSession {
-            entries: vec![entry((800, 600), (800, 600))],
+            entries: vec![entry((800, 600))],
             started: Instant::now(),
         };
         let e = session.entry(1).unwrap();
