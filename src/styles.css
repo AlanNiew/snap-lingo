@@ -1121,7 +1121,9 @@ body.result-body {
   /* Reserve the scrollbar track unconditionally: when it appears mid-resize the
      text re-wraps, which used to feed the auto-fit loop and could hang the app. */
   scrollbar-gutter: stable;
-  padding: 14px 14px 10px;
+  /* Padding is declared once, in the result-window block further down
+     (16px 16px 12px). Auto-fit reads it back from getComputedStyle, so a second
+     value here would only mislead the next reader. */
 }
 
 /* Plain wrapper for the result content: its height is the natural content
