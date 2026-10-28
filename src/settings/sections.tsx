@@ -1223,7 +1223,7 @@ export function HistorySection({
                 {shown.length > visible ? (
                   <div className="history-more">
                     <button className="btn btn-sm btn-ghost" onClick={() => setVisible((n) => n + PAGE)}>
-                      {t("historyShowMore", { count: shown.length - visible })}
+                      {t("historyShowMore", { count: Math.min(PAGE, shown.length - visible) })}
                     </button>
                   </div>
                 ) : null}

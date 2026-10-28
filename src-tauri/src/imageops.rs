@@ -259,6 +259,20 @@ mod tests {
     }
 
     #[test]
+    fn png_upload_length_matches_the_real_data_url() {
+        // `encode_for_ocr` decides the JPEG fallback from the raw PNG length, so
+        // the arithmetic there has to equal the length of the string it would
+        // have produced. Pinned against real encodings at a range of sizes.
+        let prefix = "data:image/png;base64,";
+        assert_eq!(prefix.len(), 22);
+        for (w, h) in [(1u32, 1u32), (16, 9), (97, 53), (640, 360), (1440, 900)] {
+            let png = to_png_bytes(&checker(w, h)).unwrap();
+            let predicted = (png.len() + 2) / 3 * 4 + prefix.len();
+            assert_eq!(predicted, data_url("image/png", &png).len(), "{w}×{h}");
+        }
+    }
+
+    #[test]
     fn encode_for_ocr_falls_back_to_jpeg_when_the_png_is_too_big() {
         // White noise compresses badly: 900×900 of it lands over the 3.5 MB
         // soft limit, so the JPEG fallback must fire instead of shipping a huge
