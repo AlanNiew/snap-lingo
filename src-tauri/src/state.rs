@@ -12,7 +12,7 @@ use image::RgbaImage;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 /// Lock without the poisoning dance: a panic elsewhere must not take the app
@@ -100,7 +100,9 @@ pub struct AppState {
     pub last_result: Mutex<Option<ResultPayload>>,
     /// Kept so "重新翻译" can retry without asking the user to select again.
     pub last_source: Mutex<Option<String>>,
-    pub last_crop: Mutex<Option<RgbaImage>>,
+    /// Shared, not owned: the job, the retry path and the cached preview all
+    /// need the same crop, and a 1440p frame is 14.7 MB per clone.
+    pub last_crop: Mutex<Option<Arc<RgbaImage>>>,
     pub history: Mutex<Vec<HistoryItem>>,
     pub history_path: PathBuf,
     /// The notice currently on screen (`kind`, `message`), so the auto-hide

@@ -20,6 +20,7 @@ use crate::windows;
 use anyhow::{anyhow, bail, Result};
 use image::RgbaImage;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -352,7 +353,9 @@ pub fn finish_selection(app: &AppHandle, rect: SelectionRect) {
     state.mark_busy(false);
 
     // Cache the crop before the job starts, so "重试" works even if the job is
-    // cut short by a timeout.
+    // cut short by a timeout. Shared rather than cloned: the job and the cache
+    // point at the same 14.7 MB buffer.
+    let crop = Arc::new(crop);
     *lock(&state.last_crop) = Some(crop.clone());
 
     windows::show_result(app);
@@ -364,7 +367,7 @@ pub fn finish_selection(app: &AppHandle, rect: SelectionRect) {
 /// Run OCR + translation in the background, always ending in something the user
 /// can see. A timeout is reported like any other failure, and the crop has
 /// already been cached, so the retry button can pick up from here.
-fn spawn_job(app: &AppHandle, crop: RgbaImage) {
+fn spawn_job(app: &AppHandle, crop: Arc<RgbaImage>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         if tokio::time::timeout(JOB_TIMEOUT, run_job(app.clone(), crop))
@@ -394,13 +397,23 @@ struct Job {
     error: Option<String>,
 }
 
-async fn run_job(app: AppHandle, crop: RgbaImage) {
+async fn run_job(app: AppHandle, crop: Arc<RgbaImage>) {
     let started = Instant::now();
     let mut cfg = app.state::<AppState>().config();
     let providers = app.state::<AppState>().providers.clone();
-    let preview_started = Instant::now();
-    let preview = imageops::to_preview_data_url(&crop).ok();
-    let preview_ms = preview_started.elapsed().as_millis();
+    // Encode the inline preview on the blocking pool instead of here: it is a
+    // downscale plus a JPEG encode over the whole crop, and doing it inline
+    // delayed the OCR request that has not even been sent yet. The handle is
+    // awaited at the publish sites, so it overlaps the network round trip.
+    let preview_task = {
+        let crop = crop.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let preview_started = Instant::now();
+            let url = imageops::to_preview_data_url(&crop).ok();
+            let preview_ms = preview_started.elapsed().as_millis();
+            (url, preview_ms)
+        })
+    };
     let (ocr_provider, model) = provider_labels(&cfg);
     log::info!(
         "本次任务：{} · 图像 {}×{}",
@@ -433,6 +446,7 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
                 };
                 *lock(&app.state::<AppState>().last_source) = job.source.clone();
                 *lock(&app.state::<AppState>().last_crop) = Some(crop);
+                let (preview, _) = preview_task.await.unwrap_or_default();
                 publish(&app, &cfg, job, preview, started.elapsed());
                 return;
             }
@@ -446,6 +460,7 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
                     model: String::new(),
                     error: Some(format!("{err:#}")),
                 };
+                let (preview, _) = preview_task.await.unwrap_or_default();
                 publish(&app, &cfg, job, preview, started.elapsed());
                 return;
             }
@@ -496,6 +511,7 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
                 translate_ms = translate_started.elapsed().as_millis();
             }
 
+            let (preview, preview_ms) = preview_task.await.unwrap_or_default();
             log::info!(
                 "处理计时：识别 {ocr_ms} ms · 翻译 {translate_ms} ms · 预览 {preview_ms} ms · 合计 {} ms",
                 started.elapsed().as_millis()
@@ -507,6 +523,7 @@ async fn run_job(app: AppHandle, crop: RgbaImage) {
             publish(&app, &cfg, job, preview, started.elapsed());
         }
         Err(err) => {
+            let (preview, _) = preview_task.await.unwrap_or_default();
             publish(
                 &app,
                 &cfg,
