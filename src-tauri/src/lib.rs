@@ -156,7 +156,8 @@ fn supervise(app: tauri::AppHandle) {
 
 /* -------------------------------------------------------------------- paths */
 
-fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+/// `%APPDATA%\SnapLingo`: config, history, log, and the downloaded installer.
+pub(crate) fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let base = app
         .path()
         .config_dir()

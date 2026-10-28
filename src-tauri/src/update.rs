@@ -20,6 +20,41 @@ const USER_AGENT: &str = concat!("SnapLingo/", env!("CARGO_PKG_VERSION"));
 const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// Hard ceiling for an installer download. The real one is ~2.6 MB; anything
+/// past this is a redirect to something that is not our NSIS bundle, and the
+/// body is buffered in memory before it reaches disk, so it must be bounded.
+const MAX_UPDATE_BYTES: u64 = 200 * 1024 * 1024;
+
+/// Subdirectory of the config directory that holds downloaded installers.
+///
+/// Deliberately *not* `%TEMP%`: any process on the machine can create a file
+/// there with the name we are about to write, and the "install" step then
+/// executes whatever it finds. The config directory is only used by this app.
+fn update_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
+    let dir = crate::config_dir(app)
+        .map_err(|err| anyhow::anyhow!(err))
+        .context("无法定位更新目录")?
+        .join("update");
+    std::fs::create_dir_all(&dir).context("无法创建更新目录")?;
+    Ok(dir)
+}
+
+/// Whether `path` is an installer this app downloaded itself: the canonical
+/// parent must be the canonical update directory.
+fn belongs_to_update_dir(app: &tauri::AppHandle, path: &Path) -> Result<bool> {
+    let dir = update_dir(app)?;
+    let parent = match path.parent() {
+        Some(parent) => parent,
+        None => return Ok(false),
+    };
+    // Canonicalize both: the frontend gets the path as a string and could hand
+    // back a variant (`..`, case, short 8.3 name) that still resolves inside.
+    match (std::fs::canonicalize(&dir), std::fs::canonicalize(parent)) {
+        (Ok(dir), Ok(parent)) => Ok(dir == parent),
+        _ => Ok(false),
+    }
+}
+
 pub const DEFAULT_REPO: &str = "AlanNiew/snap-lingo";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -262,12 +297,14 @@ pub struct UpdateProgress {
     pub total: u64,
 }
 
-/// Downloads the installer of the newest release into the temp directory.
+/// Downloads the installer of the newest release into the app's update
+/// directory.
 ///
 /// `on_progress` is called while the body streams in (throttled) and once more
 /// with the final sizes, so the UI can show a real progress bar instead of a
 /// spinner that looks stuck on a slow connection.
 pub async fn download(
+    app: &tauri::AppHandle,
     repo: &str,
     current: &str,
     mirror: &str,
@@ -305,6 +342,9 @@ pub async fn download(
         bail!("下载安装包失败：HTTP {status}。");
     }
     let total = response.content_length().unwrap_or(0);
+    if total > MAX_UPDATE_BYTES {
+        bail!("安装包体积异常（{total} 字节），已中止下载。");
+    }
     log::info!("开始下载更新包：{}（{} 字节）", info.asset_name, total);
     on_progress(UpdateProgress { received: 0, total });
 
@@ -318,6 +358,9 @@ pub async fn download(
         .context("下载安装包时连接中断")?
     {
         received += part.len() as u64;
+        if received > MAX_UPDATE_BYTES {
+            bail!("安装包超过 {} MB，已中止下载。", MAX_UPDATE_BYTES / 1024 / 1024);
+        }
         payload.extend_from_slice(&part);
         // ~8 events/second is plenty for a progress bar and keeps the IPC quiet.
         if last_report.elapsed() >= std::time::Duration::from_millis(120) {
@@ -333,14 +376,25 @@ pub async fn download(
         total: total.max(received),
     });
 
-    let dir = std::env::temp_dir().join("SnapLingo");
-    std::fs::create_dir_all(&dir).context("无法创建临时目录")?;
-    let path = dir.join(safe_file_name(&info.asset_name));
-    std::fs::write(&path, &payload).context("无法写入安装包")?;
+    let dir = update_dir(app)?;
+    let name = safe_file_name(&info.asset_name);
+    let path = dir.join(&name);
+    // A previous click may have left the same asset behind; replacing it is
+    // intended, but the write itself stays exclusive (`create_new`) so a file
+    // that appears between the check and the open is not silently trusted.
+    let _ = std::fs::remove_file(&path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .context("无法创建安装包文件")?;
+    use std::io::Write as _;
+    file.write_all(&payload).context("无法写入安装包")?;
+    drop(file);
     log::info!("更新包已保存：{}（{} 字节）", path.display(), payload.len());
     Ok(Downloaded {
         path: path.to_string_lossy().to_string(),
-        name: safe_file_name(&info.asset_name),
+        name,
         bytes: payload.len() as u64,
     })
 }
@@ -361,6 +415,11 @@ fn safe_file_name(name: &str) -> String {
 /// exits a moment later (the callers do that on a 400ms timer) so the locked
 /// executable is free by the time the installer copies its files.
 ///
+/// Only a file inside this app's own update directory is accepted. The path
+/// arrives from the webview, so without that check the "install update" button
+/// would also run any executable on the machine whose path a compromised page
+/// (or a stale UI state) handed over.
+///
 /// Flags: `/S` = silent (no wizard), `/UPDATE` = skip the WebView2 section, and
 /// `/R` = relaunch the app once the install has finished.
 ///
@@ -370,9 +429,12 @@ fn safe_file_name(name: &str) -> String {
 /// once Rust's `\"` escaping met cmd's quote stripping — machines that were not
 /// this dev box saw Windows complain about a missing file called `\\`. CreateProcess
 /// on the installer itself has no such rapids to fall into.
-pub fn install(path: &Path) -> Result<()> {
+pub fn install(app: &tauri::AppHandle, path: &Path) -> Result<()> {
     if !path.is_file() {
         bail!("安装包不存在：{}", path.display());
+    }
+    if !belongs_to_update_dir(app, path)? {
+        bail!("这个文件不是 SnapLingo 下载的安装包，已拒绝执行。");
     }
     std::process::Command::new(path)
         .args(["/S", "/UPDATE", "/R"])
@@ -383,19 +445,19 @@ pub fn install(path: &Path) -> Result<()> {
 }
 
 /// Path of a previously downloaded installer, if it is still around.
-pub fn downloaded_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::temp_dir().join("SnapLingo").join(safe_file_name(name));
+pub fn downloaded_path(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
+    let path = update_dir(app).ok()?.join(safe_file_name(name));
     path.is_file().then_some(path)
 }
 
 /// An installer an earlier session already downloaded. Reusing it means clicking
 /// the button twice does not pull the same 2.6 MB again.
-pub fn cached(asset_name: &str) -> Option<Downloaded> {
+pub fn cached(app: &tauri::AppHandle, asset_name: &str) -> Option<Downloaded> {
     if asset_name.trim().is_empty() {
         return None;
     }
     let name = safe_file_name(asset_name);
-    let path = downloaded_path(&name)?;
+    let path = downloaded_path(app, &name)?;
     let bytes = std::fs::metadata(&path).ok()?.len();
     (bytes > 0).then(|| Downloaded {
         path: path.to_string_lossy().to_string(),
