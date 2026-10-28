@@ -996,7 +996,10 @@ body.overlay-body {
   color: #eef1f6;
   font-size: 12.5px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(8px);
+  /* No backdrop-filter here: it sits on top of a full-screen, colour-sampled
+     layer mid-drag, where a blur forces a backbuffer read on every pointer
+     move. The bar is pushed to the bottom edge and shown at rest, so the blur
+     only ever bought a slightly softer edge. */
   pointer-events: none;
 }
 
