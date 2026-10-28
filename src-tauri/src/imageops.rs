@@ -86,10 +86,17 @@ pub fn to_jpeg_data_url(img: &RgbaImage, quality: u8) -> anyhow::Result<String> 
 /// Raw JPEG bytes — what the one-step picture translators want to receive.
 pub fn to_jpeg_bytes(img: &RgbaImage, quality: u8) -> anyhow::Result<Vec<u8>> {
     let (w, h) = img.dimensions();
-    let rgb = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();
-    let mut buf = Vec::with_capacity((w * h) as usize / 4 + 1024);
+    // JPEG has no alpha channel, so all that is needed is the RGB triples. Pack
+    // them straight out of the RGBA source rather than wrapping the frame in a
+    // DynamicImage clone first: that clone is a full-frame copy (14.7 MB for a
+    // 1440p screen) on a path that runs for every picture translation.
+    let mut rgb = vec![0u8; (w as usize) * (h as usize) * 3];
+    for (dst, src) in rgb.chunks_exact_mut(3).zip(img.as_raw().chunks_exact(4)) {
+        dst.copy_from_slice(&src[..3]);
+    }
+    let mut buf = Vec::with_capacity(rgb.len() / 8 + 1024);
     JpegEncoder::new_with_quality(&mut buf, quality)
-        .write_image(rgb.as_raw(), w, h, ExtendedColorType::Rgb8)?;
+        .write_image(rgb.as_slice(), w, h, ExtendedColorType::Rgb8)?;
     Ok(buf)
 }
 
@@ -145,17 +152,26 @@ pub fn to_preview_data_url(img: &RgbaImage) -> anyhow::Result<String> {
 
 /// Flatten RGBA onto an opaque background. Needed by the Windows OCR engine,
 /// which ignores alpha and would otherwise read transparent pixels as black.
+///
+/// Written as one predicated pass over a pre-sized buffer: `extend_from_slice`
+/// per pixel reallocated its way through five million pixels on a full screen,
+/// and the opaque path — every screenshot — avoids the alpha blend entirely.
 pub fn flattened_bgra(img: &RgbaImage) -> Vec<u8> {
     let (w, h) = img.dimensions();
-    let mut out = Vec::with_capacity((w * h * 4) as usize);
-    for px in img.pixels() {
-        let [r, g, b, a] = px.0;
+    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    for (dst, src) in out.chunks_exact_mut(4).zip(img.as_raw().chunks_exact(4)) {
+        let (r, g, b, a) = (src[0], src[1], src[2], src[3]);
+        dst[3] = 255;
         if a == 255 {
-            out.extend_from_slice(&[b, g, r, 255]);
+            dst[0] = b;
+            dst[1] = g;
+            dst[2] = r;
         } else {
             let af = a as u32;
             let blend = |c: u8| (((c as u32 * af) + (255 * (255 - af))) / 255) as u8;
-            out.extend_from_slice(&[blend(b), blend(g), blend(r), 255]);
+            dst[0] = blend(b);
+            dst[1] = blend(g);
+            dst[2] = blend(r);
         }
     }
     out
