@@ -365,6 +365,7 @@ const STRINGS = {
   historyEmptyHint: ["完成一次截图翻译后，记录会出现在这里。", "Your captures will show up here."],
   historySearch: ["搜索原文或译文…", "Search source or translation…"],
   historyNoMatch: ["没有匹配的记录", "No matching entries"],
+  historyShowMore: ["再显示 {count} 条", "Show {count} more"],
   historyClear: ["清空历史", "Clear history"],
   historyClearConfirm: ["确定要清空全部历史记录吗？", "Clear the whole history?"],
 

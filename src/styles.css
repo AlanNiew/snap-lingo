@@ -769,6 +769,13 @@ textarea {
   max-width: 340px;
 }
 
+.history-more {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 2px;
+  border-top: 1px solid var(--border);
+}
+
 .history-item {
   display: flex;
   gap: 10px;
